@@ -20,7 +20,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define PQSEALED_VERSION "1.0.0"
+#define PQSEALED_VERSION "1.0.1"
 
 /* Length of the repository data key (a secretstream key). */
 #define RC_DK_LEN 32
