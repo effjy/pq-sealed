@@ -93,31 +93,77 @@ disabled.
 
 Dependencies (all located via `pkg-config`):
 
-- `gtk+-3.0`
+- `gtk+-3.0` — the desktop GUI
 - `libsodium` — secretstream, Argon2, RNG, BLAKE2b
 - `libargon2` — Argon2id KDF
 - `openssl` (≥ 3.0) — X448, SHA-256, AES-256-GCM (key armor)
 - `liboqs` — ML-DSA / SLH-DSA signatures
 
-liboqs is rarely packaged by distributions; build it with the bundled script:
+### 1. Install the prerequisites
+
+Copy-paste the line for your distribution. This also pulls in the build tools
+(compiler, `make`, `pkg-config`) and the tools needed to build liboqs in step 2
+(`git`, `cmake`, `ninja`).
+
+**Debian / Ubuntu / Linux Mint / Pop!_OS**
+
+```sh
+sudo apt update
+sudo apt install build-essential pkg-config git cmake ninja-build \
+    libgtk-3-dev libsodium-dev libargon2-dev libssl-dev
+```
+
+**Fedora / RHEL / CentOS Stream**
+
+```sh
+sudo dnf install gcc make pkgconf-pkg-config git cmake ninja-build \
+    gtk3-devel libsodium-devel libargon2-devel openssl-devel
+```
+
+**Arch / Manjaro**
+
+```sh
+sudo pacman -S --needed base-devel pkgconf git cmake ninja \
+    gtk3 libsodium argon2 openssl
+```
+
+**openSUSE**
+
+```sh
+sudo zypper install gcc make pkg-config git cmake ninja \
+    gtk3-devel libsodium-devel libargon2-devel libopenssl-devel
+```
+
+### 2. Install liboqs
+
+liboqs (the post-quantum signature library) is rarely packaged by
+distributions, so build it with the bundled script — it fetches and compiles
+only the algorithms PQ-Sealed needs:
 
 ```sh
 ./setup-liboqs.sh                 # system-wide (/usr/local, uses sudo)
 PREFIX="$PWD/.local" ./setup-liboqs.sh   # local, no root
 ```
 
-Then:
+### 3. Compile and install
 
 ```sh
 make
 sudo make install      # binary + icon + desktop entry
+```
+
+To remove it later:
+
+```sh
 sudo make uninstall
 ```
 
-If liboqs is in a custom prefix, point `pkg-config` at it:
+If you installed liboqs to a custom prefix in step 2, point `pkg-config` at it
+when building (and set `LD_LIBRARY_PATH` to run it):
 
 ```sh
 make PKG_CONFIG_PATH="$PWD/.local/lib/pkgconfig"
+LD_LIBRARY_PATH="$PWD/.local/lib" ./pq-sealed
 ```
 
 After `make install`, **PQ-Sealed** appears in the applications menu with its
