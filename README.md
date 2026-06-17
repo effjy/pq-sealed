@@ -8,7 +8,7 @@ signed, tamper-evident snapshots.**
 Author: **Jean-Francois Lachance-Caumartin**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-00e5ff.svg?style=flat-square)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.0-39ff14.svg?style=flat-square)](#)
+[![Version](https://img.shields.io/badge/version-1.0.1-39ff14.svg?style=flat-square)](#)
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux-0e1b2b.svg?style=flat-square&logo=linux&logoColor=white)](#)
 [![Language: C](https://img.shields.io/badge/language-C-555555.svg?style=flat-square&logo=c&logoColor=white)](#)
 [![GUI: GTK3](https://img.shields.io/badge/GUI-GTK3-4e9a06.svg?style=flat-square&logo=gtk&logoColor=white)](#)

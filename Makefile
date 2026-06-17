@@ -14,7 +14,7 @@
 #   sudo make uninstall remove all installed files
 #   make clean
 
-VERSION := 1.0.0
+VERSION := 1.0.1
 BIN     := pq-sealed
 
 PREFIX   ?= /usr/local
