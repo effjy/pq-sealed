@@ -290,14 +290,14 @@ static void on_run(GtkButton *b, gpointer user) {
     const char *rpw  = gtk_entry_get_text(GTK_ENTRY(app->repo_pw_entry));
     const char *kpw  = gtk_entry_get_text(GTK_ENTRY(app->key_pw_entry));
 
-    if (!repo || !*repo) { warn_dialog(app, "Choose a repository folder."); return; }
+    if (!repo || !*repo) { warn_dialog(app, "Choose a backup directory."); return; }
     if ((op == OP_BACKUP || op == OP_RESTORE) && (!path || !*path)) {
         warn_dialog(app, op == OP_BACKUP ? "Choose a folder to back up."
                                          : "Choose a folder to restore into.");
         return;
     }
     if ((op == OP_INIT || op == OP_BACKUP || op == OP_RESTORE) && (!rpw || !*rpw)) {
-        warn_dialog(app, "Enter the repository password."); return;
+        warn_dialog(app, "Enter the backup password."); return;
     }
     if (strlen(rpw) >= PASSWORD_MAX || strlen(kpw) >= PASSWORD_MAX) {
         warn_dialog(app, "Password is too long."); return;
@@ -358,7 +358,7 @@ static void on_about(GtkButton *b, gpointer user) {
         "• Content-addressed, deduplicating snapshots — only new or\n"
         "  changed files are stored on each backup\n"
         "• Files sealed with a Kyber-1024 + X448 hybrid KEM whose\n"
-        "  secret key is wrapped by your repository password;\n"
+        "  secret key is wrapped by your backup-directory password;\n"
         "  contents encrypted with XChaCha20-Poly1305 (secretstream)\n"
         "• Each snapshot manifest signed with ML-DSA-65 (FIPS 204)\n"
         "  for tamper-evident, verifiable backups\n"
@@ -457,15 +457,16 @@ static void activate(GtkApplication *gapp, gpointer user) {
 
     /* Repository */
     app->repo_entry = gtk_entry_new();
-    gtk_entry_set_text(GTK_ENTRY(app->repo_entry), "pqsealed-repo");
+    gtk_entry_set_text(GTK_ENTRY(app->repo_entry), "pqsealed-backup");
     GtkWidget *repo_btn = gtk_button_new_with_label("Browse…");
     g_signal_connect(repo_btn, "clicked", G_CALLBACK(on_browse_repo), app);
     gtk_box_pack_start(GTK_BOX(root),
-        labeled_row("Repository:", app->repo_entry, repo_btn, NULL), FALSE, FALSE, 0);
+        labeled_row("Backup directory:", app->repo_entry, repo_btn, NULL),
+        FALSE, FALSE, 0);
 
     /* Operation */
     app->op_combo = gtk_combo_box_text_new();
-    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->op_combo), "Initialise repository");
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->op_combo), "Initialise backup directory");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->op_combo), "Back up a folder");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->op_combo), "Restore a snapshot");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->op_combo), "List snapshots");
@@ -493,7 +494,7 @@ static void activate(GtkApplication *gapp, gpointer user) {
     GtkWidget *rrev = gtk_check_button_new_with_label("Reveal");
     g_signal_connect(rrev, "toggled", G_CALLBACK(reveal_toggled), app->repo_pw_entry);
     gtk_box_pack_start(GTK_BOX(root),
-        labeled_row("Repo password:", app->repo_pw_entry, rrev, NULL),
+        labeled_row("Backup password:", app->repo_pw_entry, rrev, NULL),
         FALSE, FALSE, 0);
 
     /* Signing-key passphrase */

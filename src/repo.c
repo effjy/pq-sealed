@@ -203,13 +203,17 @@ static int load_key(const char *path, const char *pw, pqsign_key *out) {
     if (!key_armor_parse(raw, len, &a)) { free(raw); return -1; }
     snprintf(out->alg, sizeof out->alg, "%s", a.alg);
     out->is_secret = a.is_secret;
-    out->pub = a.pub; out->pub_len = a.pub_len; a.pub = NULL;
 
+    /* Decrypt first: key_decrypt feeds the embedded public key in as AEAD
+     * associated data, so a.pub must still be present here. Only afterwards
+     * do we transfer ownership of pub to the loaded key. */
     int ok = key_decrypt(&a, (pw && *pw) ? pw : NULL, &out->key, &out->key_len);
+    if (ok) { out->pub = a.pub; out->pub_len = a.pub_len; a.pub = NULL; }
+
     armor_free(&a);
     secure_wipe(raw, len);
     free(raw);
-    if (!ok) { free(out->pub); memset(out, 0, sizeof *out); return -1; }
+    if (!ok) { memset(out, 0, sizeof *out); return -1; }
     return 0;
 }
 
@@ -223,7 +227,7 @@ static int sign_file(const char *seckey_path, const char *key_pw,
         return fail(err, errlen,
                     "cannot load signing key (wrong passphrase, or corrupt key)");
     if (!sk.is_secret) { key_free(&sk);
-        return fail(err, errlen, "repository signing key is not a secret key"); }
+        return fail(err, errlen, "backup signing key is not a secret key"); }
 
     OQS_SIG *sig = OQS_SIG_new(sk.alg);
     int rc = -1;
@@ -231,7 +235,7 @@ static int sign_file(const char *seckey_path, const char *key_pw,
                 goto out; }
     if (sk.key_len != sig->length_secret_key ||
         !sk.pub || sk.pub_len != sig->length_public_key) {
-        fail(err, errlen, "repository signing key is malformed"); goto out; }
+        fail(err, errlen, "backup signing key is malformed"); goto out; }
 
     uint8_t msg[32];
     signed_message(file, msg);
@@ -405,7 +409,7 @@ static int require_repo(const char *repo, char *err, size_t errlen) {
     rp(marker, sizeof marker, repo, "PQSEALED");
     if (!file_exists(marker))
         return fail(err, errlen,
-            "'%s' is not a PQ-Sealed repository (run init first)", repo);
+            "'%s' is not a PQ-Sealed backup directory (initialise it first)", repo);
     return 0;
 }
 
@@ -414,9 +418,9 @@ int sealed_init(const char *repo, const char *repo_pw, const char *key_pw,
     char marker[4096], kr[4096], pub[4096], sec[4096], sub[4096];
     rp(marker, sizeof marker, repo, "PQSEALED");
     if (file_exists(marker))
-        return fail(err, errlen, "'%s' is already a PQ-Sealed repository", repo);
+        return fail(err, errlen, "'%s' is already a PQ-Sealed backup directory", repo);
     if (!repo_pw || !*repo_pw)
-        return fail(err, errlen, "a repository password is required");
+        return fail(err, errlen, "a backup password is required");
 
     if (mkdir_p(repo, 0700) != 0)
         return fail(err, errlen, "cannot create '%s': %s", repo, strerror(errno));
@@ -430,7 +434,7 @@ int sealed_init(const char *repo, const char *repo_pw, const char *key_pw,
     rp(kr, sizeof kr, repo, "keyring");
     int rc = rc_keyring_create(kr, repo_pw, dk);
     sodium_munlock(dk, sizeof dk);
-    if (rc != 0) return fail(err, errlen, "failed to create the repository key-ring");
+    if (rc != 0) return fail(err, errlen, "failed to create the backup key-ring");
 
     /* ML-DSA-65 snapshot-signing keypair. */
     OQS_SIG *sig = OQS_SIG_new(SIG_ALG);
@@ -475,7 +479,7 @@ int sealed_backup(const char *repo, const char *source,
     rp(kr, sizeof kr, repo, "keyring");
     if (rc_keyring_open(kr, repo_pw ? repo_pw : "", dk) != 0) {
         sodium_munlock(dk, sizeof dk);
-        return fail(err, errlen, "wrong repository password, or key-ring corrupted");
+        return fail(err, errlen, "wrong backup password, or key-ring corrupted");
     }
 
     sb_t mani = {0};
@@ -626,7 +630,7 @@ int sealed_verify(const char *repo, int *out_failures,
     rp(pubpath, sizeof pubpath, repo, "keys/snapshot.pub");
     pqsign_key pk = {0};
     if (load_key(pubpath, NULL, &pk) != 0)
-        return fail(err, errlen, "repository has no usable public key");
+        return fail(err, errlen, "backup directory has no usable public key");
 
     size_t n;
     char **names = list_snapshots(repo, &n);
@@ -770,7 +774,7 @@ int sealed_restore(const char *repo, const char *snapshot, const char *dest,
     rp(kr, sizeof kr, repo, "keyring");
     if (rc_keyring_open(kr, repo_pw ? repo_pw : "", dk) != 0) {
         sodium_munlock(dk, sizeof dk);
-        return fail(err, errlen, "wrong repository password, or key-ring corrupted");
+        return fail(err, errlen, "wrong backup password, or key-ring corrupted");
     }
 
     size_t mlen;
