@@ -394,6 +394,12 @@ static void walk(walk_ctx *c, const char *dir_abs, const char *rel_prefix) {
             c->dirs++;
             walk(c, abs, rel);
         } else if (S_ISREG(st.st_mode)) {
+            /* Skip files we cannot read rather than aborting the whole backup:
+             * sha256_file() would otherwise fail fatally on the first EACCES. */
+            if (access(abs, R_OK) != 0) {
+                warn("skipping unreadable file '%s': %s", rel, strerror(errno));
+                continue;
+            }
             store_file(c, abs, rel, &st);
         } else {
             warn("skipping special file '%s'", rel);
@@ -473,6 +479,19 @@ int sealed_backup(const char *repo, const char *source,
     if (!is_dir(src_real))
         return fail(err, errlen, "source '%s' is not a directory", src_real);
 
+    /* Refuse to back up the backup directory itself, or any folder inside it:
+     * that would recurse into objects/keyring and grow without bound. (The
+     * reverse — the backup directory living inside the source — is fine; the
+     * walk skips it by canonical path.) */
+    char repo_real[4096] = "";
+    if (realpath(repo, repo_real)) {
+        size_t rl = strlen(repo_real);
+        if (strcmp(src_real, repo_real) == 0 ||
+            (strncmp(src_real, repo_real, rl) == 0 && src_real[rl] == '/'))
+            return fail(err, errlen,
+                "source is the backup directory itself (or inside it)");
+    }
+
     uint8_t dk[RC_DK_LEN];
     sodium_mlock(dk, sizeof dk);
     char kr[4096];
@@ -493,8 +512,8 @@ int sealed_backup(const char *repo, const char *source,
 
     walk_ctx c = {0};
     c.repo = repo; c.dk = dk; c.mani = &mani; c.log = log; c.user = user;
-    if (!realpath(repo, c.repo_real))
-        sfmt(c.repo_real, sizeof c.repo_real, "%s", repo);
+    sfmt(c.repo_real, sizeof c.repo_real, "%s",
+         repo_real[0] ? repo_real : repo);
 
     logf_cb(log, user, "Backing up %s", src_real);
     walk(&c, src_real, "");
@@ -656,11 +675,45 @@ int sealed_verify(const char *repo, int *out_failures,
     return 0;
 }
 
+/* Deferred directory-mode fixups. Directories are created (and kept) at 0700
+ * during a restore so their contents can always be written; their real,
+ * possibly read-only, modes are applied here only after every file is in
+ * place. (chmod needs ownership, not a writable parent, so order is moot.) */
+typedef struct { char **paths; mode_t *modes; size_t n, cap; } dirfix_t;
+
+static int dirfix_add(dirfix_t *df, const char *path, mode_t mode) {
+    if (df->n == df->cap) {
+        size_t nc = df->cap ? df->cap * 2 : 32;
+        char **np = realloc(df->paths, nc * sizeof *np);
+        mode_t *nm = realloc(df->modes, nc * sizeof *nm);
+        if (np) df->paths = np;
+        if (nm) df->modes = nm;
+        if (!np || !nm) return -1;
+        df->cap = nc;
+    }
+    df->paths[df->n] = strdup(path);
+    if (!df->paths[df->n]) return -1;
+    df->modes[df->n] = mode;
+    df->n++;
+    return 0;
+}
+
+static void dirfix_apply_and_free(dirfix_t *df) {
+    for (size_t i = 0; i < df->n; i++) {
+        chmod(df->paths[i], df->modes[i]);
+        free(df->paths[i]);
+    }
+    free(df->paths);
+    free(df->modes);
+    df->paths = NULL; df->modes = NULL; df->n = df->cap = 0;
+}
+
 /* Apply one manifest line during restore. Returns 0 on success, -1 on a
  * fatal error (message written to err). */
 static int restore_line(const char *repo, const uint8_t *dk, const char *dest,
                         char *line, uint64_t *files, uint64_t *dirs,
-                        sealed_log_cb log, void *user, char *err, size_t errlen) {
+                        dirfix_t *df, sealed_log_cb log, void *user,
+                        char *err, size_t errlen) {
     char *save = NULL;
     char *kind = strtok_r(line, " ", &save);
     if (!kind) return 0;
@@ -681,7 +734,11 @@ static int restore_line(const char *repo, const uint8_t *dk, const char *dest,
             return fail(err, errlen, "restore path too long");
         if (mkdir_p(target, 0700) != 0)
             return fail(err, errlen, "cannot create directory '%s'", target);
-        chmod(target, (mode_t)strtoul(mode, NULL, 8));
+        /* Force it writable now (covers a pre-existing read-only dir from an
+         * earlier restore); record the final mode for the deferred pass. */
+        chmod(target, 0700);
+        if (dirfix_add(df, target, (mode_t)strtoul(mode, NULL, 8)) != 0)
+            return fail(err, errlen, "out of memory");
         (*dirs)++;
     } else if (strcmp(kind, "F") == 0) {
         char *hex   = strtok_r(NULL, " ", &save);
@@ -799,14 +856,18 @@ int sealed_restore(const char *repo, const char *snapshot, const char *dest,
     logf_cb(log, user, "Restoring %s -> %s", base ? base + 1 : mpath, dest);
 
     uint64_t files = 0, dirs = 0;
+    dirfix_t df = {0};
     int rc = 0;
     while ((line = strtok_r(NULL, "\n", &save)) != NULL) {
         if (strncmp(line, "source ", 7) == 0 ||
             strncmp(line, "created ", 8) == 0) continue;
-        if ((rc = restore_line(repo, dk, dest, line, &files, &dirs,
+        if ((rc = restore_line(repo, dk, dest, line, &files, &dirs, &df,
                                log, user, err, errlen)) != 0)
             break;
     }
+
+    /* Now that every file is written, set the directories' real modes. */
+    dirfix_apply_and_free(&df);
 
     sodium_munlock(dk, sizeof dk);
     free(mbuf);

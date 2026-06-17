@@ -424,7 +424,7 @@ static void activate(GtkApplication *gapp, gpointer user) {
 
     app->window = gtk_application_window_new(gapp);
     gtk_window_set_title(GTK_WINDOW(app->window), "PQ-Sealed");
-    gtk_window_set_default_size(GTK_WINDOW(app->window), 620, -1);
+    gtk_window_set_default_size(GTK_WINDOW(app->window), 940, 540);
     gtk_window_set_icon_name(GTK_WINDOW(app->window), "pq-sealed");
     gtk_window_set_position(GTK_WINDOW(app->window), GTK_WIN_POS_CENTER);
 
@@ -444,6 +444,7 @@ static void activate(GtkApplication *gapp, gpointer user) {
     gtk_container_set_border_width(GTK_CONTAINER(root), 18);
     gtk_container_add(GTK_CONTAINER(app->window), root);
 
+    /* Brand banner spans the full width across the top. */
     GtkWidget *brand = gtk_label_new("\xF0\x9F\x9B\xA1 P Q - S E A L E D");
     gtk_label_set_xalign(GTK_LABEL(brand), 0.5);
     gtk_style_context_add_class(gtk_widget_get_style_context(brand), "brand");
@@ -455,12 +456,25 @@ static void activate(GtkApplication *gapp, gpointer user) {
     gtk_box_pack_start(GTK_BOX(root),
                        gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 6);
 
-    /* Repository */
+    /* Two columns: controls on the left, log on the right. */
+    GtkWidget *cols = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
+    gtk_box_pack_start(GTK_BOX(root), cols, TRUE, TRUE, 0);
+
+    GtkWidget *left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_set_size_request(left, 390, -1);
+    gtk_box_pack_start(GTK_BOX(cols), left, FALSE, FALSE, 0);
+
+    GtkWidget *right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_box_pack_start(GTK_BOX(cols), right, TRUE, TRUE, 0);
+
+    /* --- left column: controls --- */
+
+    /* Backup directory */
     app->repo_entry = gtk_entry_new();
     gtk_entry_set_text(GTK_ENTRY(app->repo_entry), "pqsealed-backup");
     GtkWidget *repo_btn = gtk_button_new_with_label("Browse…");
     g_signal_connect(repo_btn, "clicked", G_CALLBACK(on_browse_repo), app);
-    gtk_box_pack_start(GTK_BOX(root),
+    gtk_box_pack_start(GTK_BOX(left),
         labeled_row("Backup directory:", app->repo_entry, repo_btn, NULL),
         FALSE, FALSE, 0);
 
@@ -471,29 +485,29 @@ static void activate(GtkApplication *gapp, gpointer user) {
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->op_combo), "Restore a snapshot");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->op_combo), "List snapshots");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->op_combo), "Verify snapshots");
-    gtk_box_pack_start(GTK_BOX(root),
+    gtk_box_pack_start(GTK_BOX(left),
         labeled_row("Operation:", app->op_combo, NULL, NULL), FALSE, FALSE, 0);
 
     /* Source / destination folder */
     app->path_entry = gtk_entry_new();
     app->path_btn = gtk_button_new_with_label("Browse…");
     g_signal_connect(app->path_btn, "clicked", G_CALLBACK(on_browse_path), app);
-    gtk_box_pack_start(GTK_BOX(root),
+    gtk_box_pack_start(GTK_BOX(left),
         labeled_row("Source folder:", app->path_entry, app->path_btn,
                     &app->path_label), FALSE, FALSE, 0);
 
     /* Snapshot (restore) */
     app->snap_entry = gtk_entry_new();
     gtk_entry_set_text(GTK_ENTRY(app->snap_entry), "latest");
-    gtk_box_pack_start(GTK_BOX(root),
+    gtk_box_pack_start(GTK_BOX(left),
         labeled_row("Snapshot:", app->snap_entry, NULL, &app->snap_label),
         FALSE, FALSE, 0);
 
-    /* Repository password */
+    /* Backup password */
     app->repo_pw_entry = pw_entry();
     GtkWidget *rrev = gtk_check_button_new_with_label("Reveal");
     g_signal_connect(rrev, "toggled", G_CALLBACK(reveal_toggled), app->repo_pw_entry);
-    gtk_box_pack_start(GTK_BOX(root),
+    gtk_box_pack_start(GTK_BOX(left),
         labeled_row("Backup password:", app->repo_pw_entry, rrev, NULL),
         FALSE, FALSE, 0);
 
@@ -501,7 +515,7 @@ static void activate(GtkApplication *gapp, gpointer user) {
     app->key_pw_entry = pw_entry();
     GtkWidget *krev = gtk_check_button_new_with_label("Reveal");
     g_signal_connect(krev, "toggled", G_CALLBACK(reveal_toggled), app->key_pw_entry);
-    gtk_box_pack_start(GTK_BOX(root),
+    gtk_box_pack_start(GTK_BOX(left),
         labeled_row("Signing pass:", app->key_pw_entry, krev, &app->key_pw_label),
         FALSE, FALSE, 0);
 
@@ -511,28 +525,34 @@ static void activate(GtkApplication *gapp, gpointer user) {
     gtk_style_context_add_class(gtk_widget_get_style_context(app->run_button),
                                 "action-button");
     g_signal_connect(app->run_button, "clicked", G_CALLBACK(on_run), app);
-    gtk_box_pack_start(GTK_BOX(root), app->run_button, FALSE, FALSE, 8);
+    gtk_box_pack_start(GTK_BOX(left), app->run_button, FALSE, FALSE, 8);
 
     /* Progress + status */
     app->progress = gtk_progress_bar_new();
-    gtk_box_pack_start(GTK_BOX(root), app->progress, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(left), app->progress, FALSE, FALSE, 0);
     app->status = gtk_label_new("Ready.");
     gtk_label_set_xalign(GTK_LABEL(app->status), 0.0);
     gtk_label_set_line_wrap(GTK_LABEL(app->status), TRUE);
-    gtk_box_pack_start(GTK_BOX(root), app->status, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(left), app->status, FALSE, FALSE, 0);
 
-    /* Log */
+    /* --- right column: log --- */
+    GtkWidget *log_lbl = gtk_label_new("LOG");
+    gtk_label_set_xalign(GTK_LABEL(log_lbl), 0.0);
+    gtk_style_context_add_class(gtk_widget_get_style_context(log_lbl), "field-label");
+    gtk_box_pack_start(GTK_BOX(right), log_lbl, FALSE, FALSE, 0);
+
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
         GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
-    gtk_widget_set_size_request(scroll, -1, 170);
+    gtk_widget_set_size_request(scroll, 320, -1);
     GtkWidget *logview = gtk_text_view_new();
     gtk_text_view_set_editable(GTK_TEXT_VIEW(logview), FALSE);
     gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(logview), FALSE);
     gtk_text_view_set_monospace(GTK_TEXT_VIEW(logview), TRUE);
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(logview), GTK_WRAP_WORD_CHAR);
     app->logbuf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(logview));
     gtk_container_add(GTK_CONTAINER(scroll), logview);
-    gtk_box_pack_start(GTK_BOX(root), scroll, TRUE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(right), scroll, TRUE, TRUE, 0);
 
     g_signal_connect(app->op_combo, "changed", G_CALLBACK(on_op_changed), app);
     g_signal_connect(app->window, "destroy", G_CALLBACK(on_window_destroy), app);
