@@ -187,9 +187,32 @@ then pick an operation:
 Operations run on a worker thread with a live log, so the UI stays responsive
 during the Argon2id KDF and large backups.
 
-> **Use the same backup password each time.** Objects from earlier snapshots are
-> sealed under the data key derived from the password chosen at initialisation;
-> the backup password is fixed when the backup directory is created.
+### The two passwords (they do different jobs)
+
+When you initialise a backup directory you choose **two** secrets. They are not
+the same thing, and it helps to understand why:
+
+| | **Backup password** | **Signing passphrase** |
+|:---|:---|:---|
+| **Protects** | The *confidentiality* of your files — it unlocks the key that encrypts and decrypts everything in the backup. | The *signing key* that stamps each snapshot as authentic, so tampering can be detected. |
+| **You enter it when** | Backing up and restoring (any operation that reads or writes file contents). | Initialising, and backing up (each new snapshot is signed). |
+| **If you forget it** | Your backups are **unrecoverable** — there is no way to decrypt them. Keep it safe. | You can still *restore* and *decrypt* normally, and existing snapshots still verify. You just can't sign *new* snapshots, so you'd re-initialise a new backup directory. |
+| **Needed to verify / list?** | No. | No — verifying only needs the public key, never the passphrase. |
+
+In short:
+
+- **Backup password = the key to your data.** Lose it and the backup is gone.
+  This is the important one. It is fixed when the backup directory is created,
+  so **use the same backup password every time** — objects from earlier
+  snapshots are sealed under the key derived from it.
+- **Signing passphrase = a lock on the “authenticity stamp.”** It stops someone
+  who gets hold of the backup directory from forging a snapshot that still looks
+  valid. It is less critical for getting your data *back*.
+
+> Want to keep it simple? You may leave the **signing passphrase blank** — the
+> signing key is then stored unencrypted inside the backup directory, snapshots
+> are still signed, and `verify`/`restore` work exactly the same. The backup
+> password, however, is always required.
 
 Symbolic links and special files are skipped (with a warning); regular files and
 directory structure (modes, mtimes) are preserved.
