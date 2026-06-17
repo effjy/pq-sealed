@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <!-- Dark cyber background, matching the tool-set theme (#070b12 / #0e1726). -->
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0e1726"/>
+      <stop offset="1" stop-color="#070b12"/>
+    </linearGradient>
+    <!-- Neon shield rim: cyan -> quantum violet. -->
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#00e5ff"/>
+      <stop offset="1" stop-color="#8a2be2"/>
+    </linearGradient>
+    <!-- Neon green/cyan for the lock + seal mark. -->
+    <linearGradient id="seal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#39ff14"/>
+      <stop offset="1" stop-color="#00e5ff"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded panel -->
+  <rect x="8" y="8" width="240" height="240" rx="40" fill="url(#bg)"
+        stroke="#14384a" stroke-width="2"/>
+
+  <!-- Shield -->
+  <path d="M128 36 L204 64 L204 124 C204 174 170 208 128 222
+           C86 208 52 174 52 124 L52 64 Z"
+        fill="#0a1320" stroke="url(#rim)" stroke-width="6"
+        stroke-linejoin="round"/>
+
+  <!-- Padlock body -->
+  <rect x="96" y="120" width="64" height="50" rx="8"
+        fill="#0c1a2b" stroke="url(#seal)" stroke-width="5"/>
+  <!-- Padlock shackle -->
+  <path d="M106 120 L106 104 C106 92 116 84 128 84
+           C140 84 150 92 150 104 L150 120"
+        fill="none" stroke="url(#seal)" stroke-width="6" stroke-linecap="round"/>
+  <!-- Keyhole -->
+  <circle cx="128" cy="138" r="7" fill="#39ff14"/>
+  <rect x="125" y="142" width="6" height="16" rx="3" fill="#39ff14"/>
+
+  <!-- Post-quantum lattice dots above the lock (the "PQ" seal motif) -->
+  <g fill="#8a2be2">
+    <circle cx="104" cy="70" r="3.5"/>
+    <circle cx="128" cy="64" r="3.5"/>
+    <circle cx="152" cy="70" r="3.5"/>
+  </g>
+</svg>

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=PQ-Sealed
+GenericName=Encrypted Backups
+Comment=Incremental post-quantum encrypted backups with signed snapshots
+Exec=pq-sealed
+Icon=pq-sealed
+Terminal=false
+Categories=Utility;Security;Archiving;GTK;
+Keywords=backup;encrypt;post-quantum;kyber;snapshot;incremental;security;
+StartupNotify=true
+StartupWMClass=pq-sealed
