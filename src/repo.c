@@ -652,6 +652,10 @@ static int manifest_stats(const char *mpath, const uint8_t *dk,
     return 0;
 }
 
+char **sealed_snapshots(const char *repo, size_t *out_n) {
+    return list_snapshots(repo, out_n);
+}
+
 int sealed_list(const char *repo, const char *repo_pw, sealed_log_cb log,
                 void *user, char *err, size_t errlen) {
     if (require_repo(repo, err, errlen) != 0) return -1;

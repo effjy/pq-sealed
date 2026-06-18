@@ -253,6 +253,47 @@ static void reveal_toggled(GtkToggleButton *btn, gpointer u) {
     gtk_entry_set_visibility(GTK_ENTRY(u), gtk_toggle_button_get_active(btn));
 }
 
+/* Repopulate the snapshot drop-down from the currently chosen repository,
+ * preserving the user's selection where possible and always offering "latest". */
+static void refresh_snapshots(App *app) {
+    GtkComboBoxText *c = GTK_COMBO_BOX_TEXT(app->snap_entry);
+    gchar *prev = gtk_combo_box_text_get_active_text(c);
+
+    gtk_combo_box_text_remove_all(c);
+    gtk_combo_box_text_append_text(c, "latest");
+
+    const char *repo = gtk_entry_get_text(GTK_ENTRY(app->repo_entry));
+    size_t n = 0;
+    char **names = (repo && *repo) ? sealed_snapshots(repo, &n) : NULL;
+    /* Newest first is friendlier in a menu (sealed_snapshots is oldest-first). */
+    for (size_t i = n; i-- > 0; ) {
+        gtk_combo_box_text_append_text(c, names[i]);
+        free(names[i]);
+    }
+    free(names);
+
+    int active = 0;  /* default to "latest" */
+    /* Re-select the previous choice if it still exists. */
+    if (prev) {
+        GtkTreeModel *m = gtk_combo_box_get_model(GTK_COMBO_BOX(c));
+        GtkTreeIter it; int idx = 0; gboolean ok = gtk_tree_model_get_iter_first(m, &it);
+        while (ok) {
+            gchar *txt = NULL;
+            gtk_tree_model_get(m, &it, 0, &txt, -1);
+            if (txt && strcmp(txt, prev) == 0) { active = idx; g_free(txt); break; }
+            g_free(txt);
+            ok = gtk_tree_model_iter_next(m, &it); idx++;
+        }
+        g_free(prev);
+    }
+    gtk_combo_box_set_active(GTK_COMBO_BOX(c), active);
+}
+
+static void on_repo_changed(GtkEditable *e, gpointer user) {
+    (void)e;
+    refresh_snapshots((App *)user);
+}
+
 /* Enable/disable fields and relabel for the selected operation. */
 static void on_op_changed(GtkComboBox *combo, gpointer user) {
     App *app = user;
@@ -272,6 +313,9 @@ static void on_op_changed(GtkComboBox *combo, gpointer user) {
     gtk_widget_set_sensitive(app->repo_pw_entry, needs_pw);
     gtk_widget_set_sensitive(app->key_pw_entry, init || backup);
 
+    /* Pull in the available snapshots when entering Restore. */
+    if (restore) refresh_snapshots(app);
+
     const char *labels[] = { "INITIALISE", "BACK UP", "RESTORE", "LIST", "VERIFY" };
     gtk_button_set_label(GTK_BUTTON(app->run_button), labels[op]);
 }
@@ -289,7 +333,6 @@ static void on_run(GtkButton *b, gpointer user) {
     int op = gtk_combo_box_get_active(GTK_COMBO_BOX(app->op_combo));
     const char *repo = gtk_entry_get_text(GTK_ENTRY(app->repo_entry));
     const char *path = gtk_entry_get_text(GTK_ENTRY(app->path_entry));
-    const char *snap = gtk_entry_get_text(GTK_ENTRY(app->snap_entry));
     const char *rpw  = gtk_entry_get_text(GTK_ENTRY(app->repo_pw_entry));
     const char *kpw  = gtk_entry_get_text(GTK_ENTRY(app->key_pw_entry));
 
@@ -317,7 +360,10 @@ static void on_run(GtkButton *b, gpointer user) {
     sodium_mlock(job->key_pw, sizeof job->key_pw);
     g_strlcpy(job->repo, repo, sizeof job->repo);
     g_strlcpy(job->path2, path, sizeof job->path2);
+    gchar *snap = gtk_combo_box_text_get_active_text(
+                      GTK_COMBO_BOX_TEXT(app->snap_entry));
     g_strlcpy(job->snapshot, (snap && *snap) ? snap : "latest", sizeof job->snapshot);
+    g_free(snap);
     g_strlcpy(job->repo_pw, rpw, sizeof job->repo_pw);
     g_strlcpy(job->key_pw, kpw, sizeof job->key_pw);
 
@@ -477,6 +523,7 @@ static void activate(GtkApplication *gapp, gpointer user) {
     gtk_entry_set_text(GTK_ENTRY(app->repo_entry), "pqsealed-backup");
     GtkWidget *repo_btn = gtk_button_new_with_label("Browse…");
     g_signal_connect(repo_btn, "clicked", G_CALLBACK(on_browse_repo), app);
+    g_signal_connect(app->repo_entry, "changed", G_CALLBACK(on_repo_changed), app);
     gtk_box_pack_start(GTK_BOX(left),
         labeled_row("Backup directory:", app->repo_entry, repo_btn, NULL),
         FALSE, FALSE, 0);
@@ -499,9 +546,10 @@ static void activate(GtkApplication *gapp, gpointer user) {
         labeled_row("Source folder:", app->path_entry, app->path_btn,
                     &app->path_label), FALSE, FALSE, 0);
 
-    /* Snapshot (restore) */
-    app->snap_entry = gtk_entry_new();
-    gtk_entry_set_text(GTK_ENTRY(app->snap_entry), "latest");
+    /* Snapshot (restore) — a drop-down populated from the chosen repo. */
+    app->snap_entry = gtk_combo_box_text_new();
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->snap_entry), "latest");
+    gtk_combo_box_set_active(GTK_COMBO_BOX(app->snap_entry), 0);
     gtk_box_pack_start(GTK_BOX(left),
         labeled_row("Snapshot:", app->snap_entry, NULL, &app->snap_label),
         FALSE, FALSE, 0);
