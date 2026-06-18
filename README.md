@@ -39,7 +39,7 @@ tool-set (Ciphers, Axis, …).
 
 <div align="center">
 
-![PQ-Sealed main window](screenshot1.png)
+![PQ-Sealed main window](screenshot.png)
 
 *The PQ-Sealed main window — choose a backup directory, pick an operation
 (initialise, back up, restore, list, verify), then run it with a live log.*
@@ -183,6 +183,7 @@ then pick an operation:
 | **Restore a snapshot** | Decrypts a snapshot (default `latest`) into a chosen folder after verifying its signature. |
 | **List snapshots** | Lists snapshots with size and signature status (public key only). |
 | **Verify snapshots** | Checks every snapshot signature against the public key. |
+| **Delete a snapshot** | Removes a chosen snapshot and garbage-collects the data objects no other snapshot still references, reclaiming disk space. Asks for the backup password (every remaining manifest is read to find shared objects) and confirms before deleting. Objects shared with other snapshots are kept. |
 
 Operations run on a worker thread with a live log, so the UI stays responsive
 during the Argon2id KDF and large backups.
