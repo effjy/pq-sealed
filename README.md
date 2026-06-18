@@ -39,7 +39,7 @@ tool-set (Ciphers, Axis, …).
 
 <div align="center">
 
-![PQ-Sealed main window](screenshot1.png)
+![PQ-Sealed main window](screenshot.png)
 
 *The PQ-Sealed main window — choose a backup directory, pick an operation
 (initialise, back up, restore, list, verify), then run it with a live log.*
@@ -209,10 +209,13 @@ In short:
   who gets hold of the backup directory from forging a snapshot that still looks
   valid. It is less critical for getting your data *back*.
 
-> Want to keep it simple? You may leave the **signing passphrase blank** — the
-> signing key is then stored unencrypted inside the backup directory, snapshots
-> are still signed, and `verify`/`restore` work exactly the same. The backup
-> password, however, is always required.
+> ⚠️ **Leaving the signing passphrase blank stores the signing key unencrypted**
+> in `keys/snapshot.key` inside the backup directory. Snapshots are still signed
+> and `verify`/`restore` work exactly the same, but anyone who obtains a copy of
+> the directory then holds the secret signing key and can forge snapshots that
+> still verify as authentic. Only do this if the backup directory itself is on
+> trusted, access-controlled storage. To protect the key at rest, set a signing
+> passphrase at init. The backup password, by contrast, is always required.
 
 Symbolic links and special files are skipped (with a warning); regular files and
 directory structure (modes, mtimes) are preserved.
