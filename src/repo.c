@@ -735,6 +735,164 @@ int sealed_list(const char *repo, const char *repo_pw, sealed_log_cb log,
     return 0;
 }
 
+/* ----- snapshot deletion + object garbage collection -------------------- */
+
+/* A growable bag of 64-char object hashes. */
+typedef struct { char **v; size_t n, cap; } hexset;
+
+static int hexset_add(hexset *s, const char *hex) {
+    if (s->n == s->cap) {
+        size_t nc = s->cap ? s->cap * 2 : 256;
+        char **nv = realloc(s->v, nc * sizeof *nv);
+        if (!nv) return -1;
+        s->v = nv; s->cap = nc;
+    }
+    s->v[s->n] = strdup(hex);
+    if (!s->v[s->n]) return -1;
+    s->n++;
+    return 0;
+}
+
+static void hexset_free(hexset *s) {
+    for (size_t i = 0; i < s->n; i++) free(s->v[i]);
+    free(s->v);
+    s->v = NULL; s->n = s->cap = 0;
+}
+
+/* Free a NULL-or-array of strdup'd names plus the array itself. */
+static void free_names(char **names, size_t n) {
+    for (size_t i = 0; i < n; i++) free(names[i]);
+    free(names);
+}
+
+/* Decrypt the manifest at mpath and add every F-line object hash to `out`.
+ * Returns 0 on success, -1 if the manifest cannot be decrypted/parsed. */
+static int collect_hashes(const char *mpath, const uint8_t *dk, hexset *out) {
+    size_t mlen;
+    uint8_t *mbuf = rc_open_buf(mpath, dk, &mlen);
+    if (!mbuf) return -1;
+
+    char *save = NULL;
+    char *line = strtok_r((char *)mbuf, "\n", &save);
+    if (!line || strcmp(line, MANIFEST_HDR) != 0) { free(mbuf); return -1; }
+
+    int rc = 0;
+    while ((line = strtok_r(NULL, "\n", &save)) != NULL) {
+        if (line[0] == 'F' && line[1] == ' ') {
+            char *h = line + 2;
+            char *sp = strchr(h, ' ');
+            if (sp && (size_t)(sp - h) == 64) {
+                char hex[65];
+                memcpy(hex, h, 64); hex[64] = '\0';
+                if (hexset_add(out, hex) != 0) { rc = -1; break; }
+            }
+        }
+    }
+    free(mbuf);
+    return rc;
+}
+
+int sealed_delete(const char *repo, const char *snapshot, const char *repo_pw,
+                  sealed_log_cb log, void *user, char *err, size_t errlen) {
+    if (require_repo(repo, err, errlen) != 0) return -1;
+    if (!snapshot || !*snapshot)
+        return fail(err, errlen, "no snapshot selected");
+
+    size_t n;
+    char **names = list_snapshots(repo, &n);
+    if (n == 0) { free(names); return fail(err, errlen, "no snapshots to delete"); }
+
+    /* Resolve the target manifest's base name ('latest' -> newest). */
+    char target[512];
+    if (strcmp(snapshot, "latest") == 0) {
+        snprintf(target, sizeof target, "%s", names[n - 1]);
+    } else {
+        size_t sl = strlen(snapshot);
+        const char *suffix = (sl >= 9 && strcmp(snapshot + sl - 9, ".manifest") == 0)
+            ? "" : ".manifest";
+        if (snprintf(target, sizeof target, "%s%s", snapshot, suffix)
+                >= (int)sizeof target) {
+            free_names(names, n);
+            return fail(err, errlen, "snapshot name is too long");
+        }
+    }
+
+    char mpath[4096], sigpath[4096];
+    if (sfmt(mpath, sizeof mpath, "%s/snapshots/%s", repo, target) != 0 ||
+        sfmt(sigpath, sizeof sigpath, "%s.sig", mpath) != 0) {
+        free_names(names, n);
+        return fail(err, errlen, "snapshot path is too long");
+    }
+    if (!file_exists(mpath)) {
+        free_names(names, n);
+        return fail(err, errlen, "snapshot '%s' not found", target);
+    }
+
+    /* Garbage collection needs to read every manifest, so unlock the key-ring. */
+    uint8_t dk[RC_DK_LEN];
+    sodium_mlock(dk, sizeof dk);
+    char kr[4096];
+    rp(kr, sizeof kr, repo, "keyring");
+    if (rc_keyring_open(kr, repo_pw ? repo_pw : "", dk) != 0) {
+        sodium_munlock(dk, sizeof dk);
+        free_names(names, n);
+        return fail(err, errlen, "wrong backup password, or key-ring corrupted");
+    }
+
+    /* Build the set of objects still referenced by every OTHER snapshot, and
+     * the set referenced by the target. Compute both before deleting anything
+     * so a single unreadable manifest aborts the GC instead of orphaning data. */
+    hexset keep = {0}, tgt = {0};
+    int rc = 0;
+    for (size_t i = 0; i < n && rc == 0; i++) {
+        if (strcmp(names[i], target) == 0) continue;
+        char op[4096];
+        if (sfmt(op, sizeof op, "%s/snapshots/%s", repo, names[i]) != 0 ||
+            collect_hashes(op, dk, &keep) != 0)
+            rc = fail(err, errlen,
+                      "could not read snapshot '%s'; aborting to avoid data loss",
+                      names[i]);
+    }
+    if (rc == 0 && collect_hashes(mpath, dk, &tgt) != 0)
+        rc = fail(err, errlen, "failed to read the snapshot manifest");
+
+    if (rc == 0) {
+        qsort(keep.v, keep.n, sizeof *keep.v, cmp_str);
+
+        /* The snapshot record goes first; then sweep its now-unreferenced
+         * objects. (Doing the manifest first means a crash mid-sweep simply
+         * leaves a few orphan objects, never a dangling manifest.) */
+        remove(mpath);
+        remove(sigpath);
+
+        uint64_t freed_n = 0, freed_b = 0;
+        for (size_t i = 0; i < tgt.n; i++) {
+            const char *hex = tgt.v[i];
+            if (bsearch(&hex, keep.v, keep.n, sizeof *keep.v, cmp_str))
+                continue;                       /* still used elsewhere */
+            char objp[4096];
+            repo_object_path(objp, sizeof objp, repo, hex);
+            struct stat st;
+            if (stat(objp, &st) == 0 && remove(objp) == 0) {
+                freed_n++;
+                freed_b += (uint64_t)st.st_size;   /* sealed-on-disk size */
+            }
+        }
+        char szs[32];
+        fmt_size(freed_b, szs, sizeof szs);
+        logf_cb(log, user, "Deleted snapshot %s", target);
+        logf_cb(log, user, "Reclaimed %llu object(s), %s freed",
+                (unsigned long long)freed_n, szs);
+    }
+
+    hexset_free(&keep);
+    hexset_free(&tgt);
+    sodium_munlock(dk, sizeof dk);
+    for (size_t i = 0; i < n; i++) free(names[i]);
+    free(names);
+    return rc == 0 ? 0 : -1;
+}
+
 int sealed_verify(const char *repo, int *out_failures,
                   sealed_log_cb log, void *user, char *err, size_t errlen) {
     if (require_repo(repo, err, errlen) != 0) return -1;

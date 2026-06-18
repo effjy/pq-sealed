@@ -67,7 +67,7 @@ static const char *APP_CSS =
     ".status-ok { color: #39ff14; } .status-err { color: #ff426f; }"
     ".status-run { color: #00e5ff; }";
 
-enum { OP_INIT = 0, OP_BACKUP, OP_RESTORE, OP_LIST, OP_VERIFY };
+enum { OP_INIT = 0, OP_BACKUP, OP_RESTORE, OP_LIST, OP_VERIFY, OP_DELETE };
 
 typedef struct Job Job;
 
@@ -163,6 +163,8 @@ static void free_app(App *app) { stop_pulse(app); g_free(app); }
 
 /* ----- worker thread ---------------------------------------------------- */
 
+static void refresh_snapshots(App *app);
+
 static gboolean job_finished_idle(gpointer data) {
     Job *job = data;
     App *app = job->app;
@@ -183,6 +185,9 @@ static gboolean job_finished_idle(gpointer data) {
                                   job->rc == 0 ? 1.0 : 0.0);
     if (job->rc == 0) {
         set_status(app, "status-ok", "\xE2\x9C\x94 Done.");
+        /* Operations that add or remove a snapshot invalidate the drop-down. */
+        if (job->op == OP_DELETE || job->op == OP_BACKUP)
+            refresh_snapshots(app);
     } else {
         gchar *msg = g_strdup_printf("\xE2\x9C\x96 %s", job->err);
         set_status(app, "status-err", msg);
@@ -224,6 +229,10 @@ static gpointer worker_thread(gpointer data) {
         job->rc = sealed_verify(job->repo, NULL, log_cb, app,
                                 job->err, sizeof job->err);
         break;
+    case OP_DELETE:
+        job->rc = sealed_delete(job->repo, job->snapshot, job->repo_pw,
+                                log_cb, app, job->err, sizeof job->err);
+        break;
     }
     g_idle_add(job_finished_idle, job);
     return NULL;
@@ -254,13 +263,16 @@ static void reveal_toggled(GtkToggleButton *btn, gpointer u) {
 }
 
 /* Repopulate the snapshot drop-down from the currently chosen repository,
- * preserving the user's selection where possible and always offering "latest". */
+ * preserving the user's selection where possible. Restore offers "latest" as a
+ * convenience; Delete does not — it forces an explicit, deliberate choice. */
 static void refresh_snapshots(App *app) {
     GtkComboBoxText *c = GTK_COMBO_BOX_TEXT(app->snap_entry);
     gchar *prev = gtk_combo_box_text_get_active_text(c);
+    int op = gtk_combo_box_get_active(GTK_COMBO_BOX(app->op_combo));
 
     gtk_combo_box_text_remove_all(c);
-    gtk_combo_box_text_append_text(c, "latest");
+    if (op != OP_DELETE)
+        gtk_combo_box_text_append_text(c, "latest");
 
     const char *repo = gtk_entry_get_text(GTK_ENTRY(app->repo_entry));
     size_t n = 0;
@@ -301,22 +313,26 @@ static void on_op_changed(GtkComboBox *combo, gpointer user) {
     gboolean backup  = (op == OP_BACKUP);
     gboolean restore = (op == OP_RESTORE);
     gboolean init    = (op == OP_INIT);
-    /* The repo password is required for init/backup/restore and optional for
-     * list (it unlocks the real per-snapshot data sizes); verify needs none. */
+    gboolean delete  = (op == OP_DELETE);
+    /* The repo password is required for init/backup/restore/delete and optional
+     * for list (it unlocks the real per-snapshot data sizes); verify needs none. */
     gboolean needs_pw = (op != OP_VERIFY);
+    /* Both restore and delete pick an existing snapshot from the drop-down. */
+    gboolean pick_snap = (restore || delete);
 
     gtk_widget_set_sensitive(app->path_entry, backup || restore);
     gtk_widget_set_sensitive(app->path_btn,   backup || restore);
     gtk_label_set_text(GTK_LABEL(app->path_label),
                        restore ? "Restore into:" : "Source folder:");
-    gtk_widget_set_sensitive(app->snap_entry, restore);
+    gtk_widget_set_sensitive(app->snap_entry, pick_snap);
     gtk_widget_set_sensitive(app->repo_pw_entry, needs_pw);
     gtk_widget_set_sensitive(app->key_pw_entry, init || backup);
 
-    /* Pull in the available snapshots when entering Restore. */
-    if (restore) refresh_snapshots(app);
+    /* Pull in the available snapshots when entering Restore or Delete. */
+    if (pick_snap) refresh_snapshots(app);
 
-    const char *labels[] = { "INITIALISE", "BACK UP", "RESTORE", "LIST", "VERIFY" };
+    const char *labels[] = { "INITIALISE", "BACK UP", "RESTORE",
+                             "LIST", "VERIFY", "DELETE" };
     gtk_button_set_label(GTK_BUTTON(app->run_button), labels[op]);
 }
 
@@ -357,7 +373,8 @@ static void on_run(GtkButton *b, gpointer user) {
                                          : "Choose a folder to restore into.");
         return;
     }
-    if ((op == OP_INIT || op == OP_BACKUP || op == OP_RESTORE) && (!rpw || !*rpw)) {
+    if ((op == OP_INIT || op == OP_BACKUP || op == OP_RESTORE || op == OP_DELETE)
+        && (!rpw || !*rpw)) {
         warn_dialog(app, "Enter the backup password."); return;
     }
     if (strlen(rpw) >= PASSWORD_MAX || strlen(kpw) >= PASSWORD_MAX) {
@@ -378,6 +395,25 @@ static void on_run(GtkButton *b, gpointer user) {
                 "signed snapshots.\n\n"
                 "Enter a signing passphrase to protect it, or proceed unprotected.",
                 "Proceed _unprotected"))
+            return;
+    }
+    /* Deletion is irreversible and reclaims shared data — confirm explicitly. */
+    if (op == OP_DELETE) {
+        gchar *sel = gtk_combo_box_text_get_active_text(
+                         GTK_COMBO_BOX_TEXT(app->snap_entry));
+        if (!sel || !*sel) {
+            g_free(sel);
+            warn_dialog(app, "Select a snapshot to delete."); return;
+        }
+        char msg[512];
+        g_snprintf(msg, sizeof msg,
+            "Permanently delete snapshot \xE2\x80\x9C%s\xE2\x80\x9D?", sel);
+        g_free(sel);
+        if (!confirm_dialog(app, msg,
+                "The snapshot record is removed and any data objects it alone "
+                "referenced are deleted to reclaim space. Objects shared with "
+                "other snapshots are kept. This cannot be undone.",
+                "_Delete snapshot"))
             return;
     }
 
@@ -563,6 +599,7 @@ static void activate(GtkApplication *gapp, gpointer user) {
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->op_combo), "Restore a snapshot");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->op_combo), "List snapshots");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->op_combo), "Verify snapshots");
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->op_combo), "Delete a snapshot");
     gtk_box_pack_start(GTK_BOX(left),
         labeled_row("Operation:", app->op_combo, NULL, NULL), FALSE, FALSE, 0);
 
