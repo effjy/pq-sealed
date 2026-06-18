@@ -95,4 +95,10 @@ int sealed_list(const char *repo, const char *repo_pw, sealed_log_cb log,
 int sealed_verify(const char *repo, int *out_failures,
                   sealed_log_cb log, void *user, char *err, size_t errlen);
 
+/* Return a sorted array of snapshot manifest names (oldest first, so the last
+ * element is the newest). *out_n receives the count. Returns NULL with *out_n
+ * == 0 when there are none or the repository cannot be read. The caller frees
+ * each element and the array itself. Needs no password. */
+char **sealed_snapshots(const char *repo, size_t *out_n);
+
 #endif /* PQSEALED_H */
