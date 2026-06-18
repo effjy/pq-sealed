@@ -95,6 +95,13 @@ int sealed_list(const char *repo, const char *repo_pw, sealed_log_cb log,
 int sealed_verify(const char *repo, int *out_failures,
                   sealed_log_cb log, void *user, char *err, size_t errlen);
 
+/* Delete one snapshot and garbage-collect the data objects it referenced that
+ * no remaining snapshot still uses. Requires the backup password (every other
+ * manifest is read to compute the live set); if any of them is unreadable the
+ * deletion is aborted before anything is removed. */
+int sealed_delete(const char *repo, const char *snapshot, const char *repo_pw,
+                  sealed_log_cb log, void *user, char *err, size_t errlen);
+
 /* Return a sorted array of snapshot manifest names (oldest first, so the last
  * element is the newest). *out_n receives the count. Returns NULL with *out_n
  * == 0 when there are none or the repository cannot be read. The caller frees
