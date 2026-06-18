@@ -85,8 +85,11 @@ int sealed_backup(const char *repo, const char *source,
 int sealed_restore(const char *repo, const char *snapshot, const char *dest,
                    const char *repo_pw, sealed_log_cb log, void *user,
                    char *err, size_t errlen);
-int sealed_list(const char *repo, sealed_log_cb log, void *user,
-                char *err, size_t errlen);
+/* repo_pw is optional: when a valid password is supplied the manifests are
+ * decrypted to report the snapshot's true data size, file count and creation
+ * date; otherwise the listing falls back to showing the manifest file size. */
+int sealed_list(const char *repo, const char *repo_pw, sealed_log_cb log,
+                void *user, char *err, size_t errlen);
 /* On success *out_failures (may be NULL) receives the number of bad/missing
  * signatures; the call still returns 0 unless the repository is unreadable. */
 int sealed_verify(const char *repo, int *out_failures,
