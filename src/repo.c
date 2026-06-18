@@ -607,8 +607,53 @@ static char **list_snapshots(const char *repo, size_t *out_n) {
     return names;
 }
 
-int sealed_list(const char *repo, sealed_log_cb log, void *user,
-                char *err, size_t errlen) {
+/* Render a byte count as a short human-readable string ("1.4 MB"). */
+static void fmt_size(uint64_t bytes, char *out, size_t n) {
+    static const char *unit[] = { "B", "KB", "MB", "GB", "TB", "PB" };
+    double v = (double)bytes;
+    int i = 0;
+    while (v >= 1024.0 && i < 5) { v /= 1024.0; i++; }
+    if (i == 0) snprintf(out, n, "%llu B", (unsigned long long)bytes);
+    else        snprintf(out, n, "%.1f %s", v, unit[i]);
+}
+
+/* Decrypt the manifest at mpath with dk and tally its real contents: total
+ * logical file size, file count and the 'created' epoch from the header.
+ * Returns 0 on success, -1 if the manifest cannot be decrypted/parsed. */
+static int manifest_stats(const char *mpath, const uint8_t *dk,
+                          uint64_t *out_bytes, uint64_t *out_files,
+                          long long *out_created) {
+    size_t mlen;
+    uint8_t *mbuf = rc_open_buf(mpath, dk, &mlen);
+    if (!mbuf) return -1;
+
+    char *save = NULL;
+    char *line = strtok_r((char *)mbuf, "\n", &save);
+    if (!line || strcmp(line, MANIFEST_HDR) != 0) { free(mbuf); return -1; }
+
+    uint64_t bytes = 0, files = 0;
+    long long created = 0;
+    while ((line = strtok_r(NULL, "\n", &save)) != NULL) {
+        if (strncmp(line, "created ", 8) == 0) {
+            created = strtoll(line + 8, NULL, 10);
+        } else if (line[0] == 'F' && line[1] == ' ') {
+            /* F <hex> <mode> <size> <mtime> <b64rel> — skip hex and mode. */
+            char *p = strchr(line + 2, ' ');          /* end of hex */
+            if (p) p = strchr(p + 1, ' ');            /* end of mode */
+            if (p) {
+                long long sz = strtoll(p + 1, NULL, 10);
+                if (sz > 0) bytes += (uint64_t)sz;
+            }
+            files++;
+        }
+    }
+    free(mbuf);
+    *out_bytes = bytes; *out_files = files; *out_created = created;
+    return 0;
+}
+
+int sealed_list(const char *repo, const char *repo_pw, sealed_log_cb log,
+                void *user, char *err, size_t errlen) {
     if (require_repo(repo, err, errlen) != 0) return -1;
 
     char pubpath[4096];
@@ -616,10 +661,32 @@ int sealed_list(const char *repo, sealed_log_cb log, void *user,
     pqsign_key pk = {0};
     int have_pub = (load_key(pubpath, NULL, &pk) == 0);
 
+    /* With a valid password we can decrypt manifests and report the real
+     * backup size; otherwise we fall back to the manifest file size. */
+    uint8_t dk[RC_DK_LEN];
+    int have_dk = 0;
+    if (repo_pw && *repo_pw) {
+        sodium_mlock(dk, sizeof dk);
+        char kr[4096];
+        rp(kr, sizeof kr, repo, "keyring");
+        if (rc_keyring_open(kr, repo_pw, dk) == 0) have_dk = 1;
+        else {
+            sodium_munlock(dk, sizeof dk);
+            logf_cb(log, user,
+                    "warning: wrong password — showing manifest sizes only");
+        }
+    }
+
     size_t n;
     char **names = list_snapshots(repo, &n);
-    if (n == 0) logf_cb(log, user, "No snapshots in %s", repo);
-    else logf_cb(log, user, "%-28s %-10s %s", "SNAPSHOT", "SIZE", "SIGNATURE");
+    if (n == 0)
+        logf_cb(log, user, "No snapshots in %s", repo);
+    else if (have_dk)
+        logf_cb(log, user, "%-28s %8s %10s  %-16s %s",
+                "SNAPSHOT", "FILES", "DATA", "CREATED", "SIGNATURE");
+    else
+        logf_cb(log, user, "%-28s %10s %s",
+                "SNAPSHOT", "MANIFEST", "SIGNATURE");
 
     for (size_t i = 0; i < n; i++) {
         char mpath[4096], sigpath[4096];
@@ -629,15 +696,38 @@ int sealed_list(const char *repo, sealed_log_cb log, void *user,
             free(names[i]);
             continue;
         }
-        struct stat st;
-        long long sz = (stat(mpath, &st) == 0) ? (long long)st.st_size : -1;
         const char *status = !have_pub ? "?"
             : (verify_file(&pk, mpath, sigpath) == 0 ? "OK" : "BAD/UNSIGNED");
-        logf_cb(log, user, "%-28s %-10lld %s", names[i], sz, status);
+
+        if (have_dk) {
+            uint64_t bytes = 0, files = 0;
+            long long created = 0;
+            char szs[32], dates[20];
+            if (manifest_stats(mpath, dk, &bytes, &files, &created) == 0) {
+                fmt_size(bytes, szs, sizeof szs);
+                if (created > 0) {
+                    time_t t = (time_t)created; struct tm tmv;
+                    localtime_r(&t, &tmv);
+                    strftime(dates, sizeof dates, "%Y-%m-%d %H:%M", &tmv);
+                } else {
+                    snprintf(dates, sizeof dates, "-");
+                }
+                logf_cb(log, user, "%-28s %8llu %10s  %-16s %s", names[i],
+                        (unsigned long long)files, szs, dates, status);
+            } else {
+                logf_cb(log, user, "%-28s %8s %10s  %-16s %s",
+                        names[i], "?", "(locked)", "-", status);
+            }
+        } else {
+            struct stat st;
+            long long sz = (stat(mpath, &st) == 0) ? (long long)st.st_size : -1;
+            logf_cb(log, user, "%-28s %10lld %s", names[i], sz, status);
+        }
         free(names[i]);
     }
     free(names);
     if (have_pub) key_free(&pk);
+    if (have_dk) sodium_munlock(dk, sizeof dk);
     return 0;
 }
 

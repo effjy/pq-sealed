@@ -217,7 +217,8 @@ static gpointer worker_thread(gpointer data) {
                                  job->repo_pw, log_cb, app, job->err, sizeof job->err);
         break;
     case OP_LIST:
-        job->rc = sealed_list(job->repo, log_cb, app, job->err, sizeof job->err);
+        job->rc = sealed_list(job->repo, job->repo_pw, log_cb, app,
+                              job->err, sizeof job->err);
         break;
     case OP_VERIFY:
         job->rc = sealed_verify(job->repo, NULL, log_cb, app,
@@ -259,7 +260,9 @@ static void on_op_changed(GtkComboBox *combo, gpointer user) {
     gboolean backup  = (op == OP_BACKUP);
     gboolean restore = (op == OP_RESTORE);
     gboolean init    = (op == OP_INIT);
-    gboolean needs_pw = !(op == OP_LIST || op == OP_VERIFY);
+    /* The repo password is required for init/backup/restore and optional for
+     * list (it unlocks the real per-snapshot data sizes); verify needs none. */
+    gboolean needs_pw = (op != OP_VERIFY);
 
     gtk_widget_set_sensitive(app->path_entry, backup || restore);
     gtk_widget_set_sensitive(app->path_btn,   backup || restore);
