@@ -327,6 +327,21 @@ static void warn_dialog(App *app, const char *msg) {
     gtk_widget_destroy(d);
 }
 
+/* Modal yes/no confirmation. Returns TRUE if the user chose to proceed. */
+static gboolean confirm_dialog(App *app, const char *primary,
+                               const char *secondary, const char *proceed_label) {
+    GtkWidget *d = gtk_message_dialog_new(GTK_WINDOW(app->window),
+        GTK_DIALOG_MODAL, GTK_MESSAGE_WARNING, GTK_BUTTONS_NONE, "%s", primary);
+    gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(d), "%s", secondary);
+    gtk_dialog_add_buttons(GTK_DIALOG(d),
+        "_Cancel", GTK_RESPONSE_CANCEL,
+        proceed_label, GTK_RESPONSE_ACCEPT, NULL);
+    gtk_dialog_set_default_response(GTK_DIALOG(d), GTK_RESPONSE_CANCEL);
+    int resp = gtk_dialog_run(GTK_DIALOG(d));
+    gtk_widget_destroy(d);
+    return resp == GTK_RESPONSE_ACCEPT;
+}
+
 static void on_run(GtkButton *b, gpointer user) {
     (void)b;
     App *app = user;
@@ -351,6 +366,19 @@ static void on_run(GtkButton *b, gpointer user) {
     if (strlen(repo) >= sizeof ((Job*)0)->repo ||
         strlen(path) >= sizeof ((Job*)0)->path2) {
         warn_dialog(app, "Path is too long."); return;
+    }
+    /* Initialising with no signing passphrase leaves the signing key in the
+     * clear — make that an explicit, informed choice rather than a silent one. */
+    if (op == OP_INIT && (!kpw || !*kpw)) {
+        if (!confirm_dialog(app,
+                "Store the signing key without a passphrase?",
+                "The snapshot signing key proves your backups are authentic. "
+                "Left without a passphrase it is saved UNENCRYPTED in the backup "
+                "directory, so anyone who copies that directory could forge "
+                "signed snapshots.\n\n"
+                "Enter a signing passphrase to protect it, or proceed unprotected.",
+                "Proceed _unprotected"))
+            return;
     }
 
     Job *job = g_new0(Job, 1);
@@ -556,6 +584,9 @@ static void activate(GtkApplication *gapp, gpointer user) {
 
     /* Backup password */
     app->repo_pw_entry = pw_entry();
+    gtk_widget_set_tooltip_text(app->repo_pw_entry,
+        "Encrypts your file contents. Required for init, backup and restore. "
+        "If you lose it, the backup cannot be decrypted — there is no recovery.");
     GtkWidget *rrev = gtk_check_button_new_with_label("Reveal");
     g_signal_connect(rrev, "toggled", G_CALLBACK(reveal_toggled), app->repo_pw_entry);
     gtk_box_pack_start(GTK_BOX(left),
@@ -564,6 +595,14 @@ static void activate(GtkApplication *gapp, gpointer user) {
 
     /* Signing-key passphrase */
     app->key_pw_entry = pw_entry();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(app->key_pw_entry),
+        "optional — blank stores the signing key unencrypted");
+    gtk_widget_set_tooltip_text(app->key_pw_entry,
+        "Encrypts the snapshot SIGNING key (keys/snapshot.key), which proves your "
+        "snapshots are authentic. Separate from the backup password.\n\n"
+        "Leave it blank and the signing key is stored UNENCRYPTED in the backup "
+        "directory: anyone who copies the directory could forge signed snapshots. "
+        "Set a passphrase to protect it at rest.");
     GtkWidget *krev = gtk_check_button_new_with_label("Reveal");
     g_signal_connect(krev, "toggled", G_CALLBACK(reveal_toggled), app->key_pw_entry);
     gtk_box_pack_start(GTK_BOX(left),
