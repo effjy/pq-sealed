@@ -33,6 +33,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <errno.h>
+#include <limits.h>
 #include <dirent.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -522,12 +523,15 @@ int sealed_backup(const char *repo, const char *source,
         return fail(err, errlen, "%s", c.err[0] ? c.err : "backup cancelled");
     }
 
-    /* Unique, sortable snapshot name. */
+    /* Unique snapshot name in local time with an explicit UTC offset (e.g.
+     * 20260618T134859-0400), so it matches the wall clock yet stays unambiguous.
+     * Chronological ordering is recovered from the embedded offset by
+     * snapshot_instant(), not from the text, so this is safe across DST. */
     char stamp[64];
     time_t now = time(NULL);
     struct tm tmv;
-    gmtime_r(&now, &tmv);
-    strftime(stamp, sizeof stamp, "%Y%m%dT%H%M%SZ", &tmv);
+    localtime_r(&now, &tmv);
+    strftime(stamp, sizeof stamp, "%Y%m%dT%H%M%S%z", &tmv);
 
     char mdir[4096], spath[4096];
     int trunc = 0;
@@ -577,6 +581,43 @@ static int cmp_str(const void *a, const void *b) {
     return strcmp(*(const char *const *)a, *(const char *const *)b);
 }
 
+/* Parse a snapshot name's leading timestamp into an absolute UTC instant so
+ * snapshots order chronologically regardless of how the name reads locally.
+ * Accepts both the local form YYYYMMDDThhmmss±hhmm and the older UTC form
+ * ending in 'Z'. Returns LLONG_MIN if the name does not start with a stamp. */
+static long long snapshot_instant(const char *name) {
+    int Y, Mo, D, h, mi, s;
+    if (sscanf(name, "%4d%2d%2dT%2d%2d%2d", &Y, &Mo, &D, &h, &mi, &s) != 6)
+        return LLONG_MIN;
+    struct tm tmv;
+    memset(&tmv, 0, sizeof tmv);
+    tmv.tm_year = Y - 1900; tmv.tm_mon = Mo - 1; tmv.tm_mday = D;
+    tmv.tm_hour = h; tmv.tm_min = mi; tmv.tm_sec = s;
+    time_t base = timegm(&tmv);          /* treat the fields as if they were UTC */
+    if (base == (time_t)-1) return LLONG_MIN;
+
+    /* Offset follows the 15-char "YYYYMMDDThhmmss" prefix. */
+    const char *p = name + 15;
+    long long off = 0;                    /* 'Z' / absent → already UTC */
+    if (*p == '+' || *p == '-') {
+        int oh, om;
+        if (sscanf(p + 1, "%2d%2d", &oh, &om) == 2)
+            off = (long long)(oh * 3600 + om * 60) * (*p == '-' ? -1 : 1);
+    }
+    /* local = UTC + off  ⇒  UTC = (fields-as-UTC) - off. */
+    return (long long)base - off;
+}
+
+/* Order snapshots by their true instant, breaking ties (e.g. the "-1" dedup
+ * suffix, or names without a stamp) by text for a stable, deterministic sort. */
+static int cmp_snapshot(const void *a, const void *b) {
+    const char *na = *(const char *const *)a;
+    const char *nb = *(const char *const *)b;
+    long long ia = snapshot_instant(na), ib = snapshot_instant(nb);
+    if (ia != ib) return ia < ib ? -1 : 1;
+    return strcmp(na, nb);
+}
+
 /* Collect snapshot manifest base names (sorted). Caller frees each + array.
  * Returns NULL with *out_n==0 if the directory cannot be read. */
 static char **list_snapshots(const char *repo, size_t *out_n) {
@@ -602,7 +643,7 @@ static char **list_snapshots(const char *repo, size_t *out_n) {
         names[n++] = strdup(e->d_name);
     }
     closedir(d);
-    qsort(names, n, sizeof *names, cmp_str);
+    qsort(names, n, sizeof *names, cmp_snapshot);
     *out_n = n;
     return names;
 }
