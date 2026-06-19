@@ -38,25 +38,27 @@ static const char *APP_CSS =
     "  font-size: 20px; letter-spacing: 5px; }"
     ".subtitle { color: #3d7d8f; font-size: 10px; letter-spacing: 3px; }"
     "entry { background-color: #0c1421; color: #d8feff; border: 1px solid #14384a;"
-    "  border-radius: 4px; padding: 7px; font-family: monospace;"
+    "  border-radius: 4px; padding: 3px 7px; min-height: 0; font-family: monospace;"
     "  caret-color: #00e5ff; }"
     "entry:focus { border-color: #00e5ff; box-shadow: 0 0 6px rgba(0,229,255,0.6); }"
     "combobox box, combobox button, combobox { background-color: #0c1421;"
     "  color: #d8feff; border: 1px solid #14384a; border-radius: 4px;"
-    "  font-family: monospace; }"
+    "  min-height: 0; padding: 0 4px; font-family: monospace; }"
     "combobox button:hover { border-color: #00e5ff; }"
     "checkbutton { color: #9fd6e6; font-family: monospace; }"
     "checkbutton check { background-color: #0c1421; border: 1px solid #2a6b80; }"
     "checkbutton check:checked { background-color: #00e5ff; border-color: #00e5ff; }"
     "button { background: #0e1b2b; color: #9fe9ff; border: 1px solid #1d4c5e;"
-    "  border-radius: 4px; padding: 7px 14px; font-family: monospace;"
+    "  border-radius: 4px; padding: 3px 12px; min-height: 0; font-family: monospace;"
     "  letter-spacing: 1px; }"
     "button:hover { border-color: #00e5ff; color: #ffffff;"
     "  box-shadow: 0 0 8px rgba(0,229,255,0.45); }"
     "button:disabled { color: #3a566a; border-color: #16313e; }"
     ".action-button { background: linear-gradient(90deg, #00b3c4, #00e5ff);"
-    "  color: #02121a; font-weight: bold; letter-spacing: 2px;"
+    "  color: #000000; font-weight: bold; letter-spacing: 2px;"
     "  border: 1px solid #00e5ff; }"
+    ".action-button label { color: #000000; }"
+    ".action-button:hover label { color: #000000; }"
     ".action-button:hover { box-shadow: 0 0 14px rgba(0,229,255,0.8); color: #000; }"
     "progressbar trough { background-color: #0c1421; border: 1px solid #14384a;"
     "  border-radius: 4px; min-height: 14px; }"
@@ -595,7 +597,7 @@ static void activate(GtkApplication *gapp, gpointer user) {
 
     app->window = gtk_application_window_new(gapp);
     gtk_window_set_title(GTK_WINDOW(app->window), "PQ-Sealed");
-    gtk_window_set_default_size(GTK_WINDOW(app->window), 940, 540);
+    gtk_window_set_default_size(GTK_WINDOW(app->window), 940, 500);
     gtk_window_set_icon_name(GTK_WINDOW(app->window), "pq-sealed");
     gtk_window_set_position(GTK_WINDOW(app->window), GTK_WIN_POS_CENTER);
 
@@ -610,9 +612,9 @@ static void activate(GtkApplication *gapp, gpointer user) {
     gtk_header_bar_pack_end(GTK_HEADER_BAR(hb), hb_about);
     gtk_window_set_titlebar(GTK_WINDOW(app->window), hb);
 
-    GtkWidget *root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    GtkWidget *root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     gtk_style_context_add_class(gtk_widget_get_style_context(root), "root");
-    gtk_container_set_border_width(GTK_CONTAINER(root), 18);
+    gtk_container_set_border_width(GTK_CONTAINER(root), 12);
     gtk_container_add(GTK_CONTAINER(app->window), root);
 
     /* Brand banner spans the full width across the top. */
@@ -631,7 +633,7 @@ static void activate(GtkApplication *gapp, gpointer user) {
     GtkWidget *cols = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 16);
     gtk_box_pack_start(GTK_BOX(root), cols, TRUE, TRUE, 0);
 
-    GtkWidget *left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    GtkWidget *left = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
     gtk_widget_set_size_request(left, 390, -1);
     gtk_box_pack_start(GTK_BOX(cols), left, FALSE, FALSE, 0);
 
@@ -643,8 +645,12 @@ static void activate(GtkApplication *gapp, gpointer user) {
     /* Backup directory */
     app->repo_entry = gtk_entry_new();
     char *last_repo = load_last_repo();
+    /* Only pre-fill the remembered directory if it still exists; otherwise fall
+     * back to the first-run default rather than offering a dead path. */
+    gboolean have_last = last_repo && *last_repo &&
+        g_file_test(last_repo, G_FILE_TEST_IS_DIR);
     gtk_entry_set_text(GTK_ENTRY(app->repo_entry),
-                       (last_repo && *last_repo) ? last_repo : "pqsealed-backup");
+                       have_last ? last_repo : "pqsealed-backup");
     g_free(last_repo);
     GtkWidget *repo_btn = gtk_button_new_with_label("Browse…");
     g_signal_connect(repo_btn, "clicked", G_CALLBACK(on_browse_repo), app);
@@ -697,7 +703,6 @@ static void activate(GtkApplication *gapp, gpointer user) {
     g_signal_connect(rrev2, "toggled", G_CALLBACK(reveal_toggled), app->repo_pw_confirm);
     app->repo_confirm_row =
         labeled_row("Confirm password:", app->repo_pw_confirm, rrev2, NULL);
-    gtk_widget_set_no_show_all(app->repo_confirm_row, TRUE);
     gtk_box_pack_start(GTK_BOX(left), app->repo_confirm_row, FALSE, FALSE, 0);
 
     /* Signing-key passphrase */
@@ -724,7 +729,6 @@ static void activate(GtkApplication *gapp, gpointer user) {
     g_signal_connect(krev2, "toggled", G_CALLBACK(reveal_toggled), app->key_pw_confirm);
     app->key_confirm_row =
         labeled_row("Confirm pass:", app->key_pw_confirm, krev2, NULL);
-    gtk_widget_set_no_show_all(app->key_confirm_row, TRUE);
     gtk_box_pack_start(GTK_BOX(left), app->key_confirm_row, FALSE, FALSE, 0);
 
     /* Action button */
@@ -733,7 +737,7 @@ static void activate(GtkApplication *gapp, gpointer user) {
     gtk_style_context_add_class(gtk_widget_get_style_context(app->run_button),
                                 "action-button");
     g_signal_connect(app->run_button, "clicked", G_CALLBACK(on_run), app);
-    gtk_box_pack_start(GTK_BOX(left), app->run_button, FALSE, FALSE, 8);
+    gtk_box_pack_start(GTK_BOX(left), app->run_button, FALSE, FALSE, 3);
 
     /* Progress + status */
     app->progress = gtk_progress_bar_new();
