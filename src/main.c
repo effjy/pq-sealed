@@ -82,8 +82,12 @@ typedef struct {
     GtkWidget *snap_label;
     GtkWidget *snap_entry;     /* snapshot name (restore) */
     GtkWidget *repo_pw_entry;
+    GtkWidget *repo_pw_confirm; /* re-enter backup password (init only) */
+    GtkWidget *repo_confirm_row;
     GtkWidget *key_pw_label;
     GtkWidget *key_pw_entry;   /* signing passphrase (init/backup) */
+    GtkWidget *key_pw_confirm;  /* re-enter signing passphrase (init only) */
+    GtkWidget *key_confirm_row;
     GtkWidget *run_button;
     GtkWidget *progress;
     GtkWidget *status;
@@ -327,6 +331,10 @@ static void on_op_changed(GtkComboBox *combo, gpointer user) {
     gtk_widget_set_sensitive(app->snap_entry, pick_snap);
     gtk_widget_set_sensitive(app->repo_pw_entry, needs_pw);
     gtk_widget_set_sensitive(app->key_pw_entry, init || backup);
+    /* Re-enter fields guard against an unrecoverable typo when first setting a
+     * password; only Initialise establishes the passwords, so show them there. */
+    gtk_widget_set_visible(app->repo_confirm_row, init);
+    gtk_widget_set_visible(app->key_confirm_row, init);
 
     /* Pull in the available snapshots when entering Restore or Delete. */
     if (pick_snap) refresh_snapshots(app);
@@ -381,6 +389,18 @@ static void on_run(GtkButton *b, gpointer user) {
     }
     if (strlen(rpw) >= PASSWORD_MAX || strlen(kpw) >= PASSWORD_MAX) {
         warn_dialog(app, "Password is too long."); return;
+    }
+    /* Initialise bakes these passwords in permanently; a hidden-entry typo here
+     * would be unrecoverable, so require the re-entered copies to match. */
+    if (op == OP_INIT) {
+        const char *rpw2 = gtk_entry_get_text(GTK_ENTRY(app->repo_pw_confirm));
+        const char *kpw2 = gtk_entry_get_text(GTK_ENTRY(app->key_pw_confirm));
+        if (strcmp(rpw, rpw2) != 0) {
+            warn_dialog(app, "The backup passwords do not match."); return;
+        }
+        if (strcmp(kpw, kpw2) != 0) {
+            warn_dialog(app, "The signing passphrases do not match."); return;
+        }
     }
     if (strlen(repo) >= sizeof ((Job*)0)->repo ||
         strlen(path) >= sizeof ((Job*)0)->path2) {
@@ -671,6 +691,15 @@ static void activate(GtkApplication *gapp, gpointer user) {
         labeled_row("Backup password:", app->repo_pw_entry, rrev, NULL),
         FALSE, FALSE, 0);
 
+    /* Confirm backup password (shown only for Initialise) */
+    app->repo_pw_confirm = pw_entry();
+    GtkWidget *rrev2 = gtk_check_button_new_with_label("Reveal");
+    g_signal_connect(rrev2, "toggled", G_CALLBACK(reveal_toggled), app->repo_pw_confirm);
+    app->repo_confirm_row =
+        labeled_row("Confirm password:", app->repo_pw_confirm, rrev2, NULL);
+    gtk_widget_set_no_show_all(app->repo_confirm_row, TRUE);
+    gtk_box_pack_start(GTK_BOX(left), app->repo_confirm_row, FALSE, FALSE, 0);
+
     /* Signing-key passphrase */
     app->key_pw_entry = pw_entry();
     gtk_entry_set_placeholder_text(GTK_ENTRY(app->key_pw_entry),
@@ -686,6 +715,17 @@ static void activate(GtkApplication *gapp, gpointer user) {
     gtk_box_pack_start(GTK_BOX(left),
         labeled_row("Signing pass:", app->key_pw_entry, krev, &app->key_pw_label),
         FALSE, FALSE, 0);
+
+    /* Confirm signing passphrase (shown only for Initialise) */
+    app->key_pw_confirm = pw_entry();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(app->key_pw_confirm),
+        "re-enter signing passphrase (leave blank if unset)");
+    GtkWidget *krev2 = gtk_check_button_new_with_label("Reveal");
+    g_signal_connect(krev2, "toggled", G_CALLBACK(reveal_toggled), app->key_pw_confirm);
+    app->key_confirm_row =
+        labeled_row("Confirm pass:", app->key_pw_confirm, krev2, NULL);
+    gtk_widget_set_no_show_all(app->key_confirm_row, TRUE);
+    gtk_box_pack_start(GTK_BOX(left), app->key_confirm_row, FALSE, FALSE, 0);
 
     /* Action button */
     app->run_button = gtk_button_new_with_label("INITIALISE");
