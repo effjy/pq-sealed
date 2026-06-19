@@ -358,6 +358,8 @@ static gboolean confirm_dialog(App *app, const char *primary,
     return resp == GTK_RESPONSE_ACCEPT;
 }
 
+static void save_last_repo(const char *repo);
+
 static void on_run(GtkButton *b, gpointer user) {
     (void)b;
     App *app = user;
@@ -416,6 +418,9 @@ static void on_run(GtkButton *b, gpointer user) {
                 "_Delete snapshot"))
             return;
     }
+
+    /* Remember this backup directory for next launch (path only, no secrets). */
+    save_last_repo(repo);
 
     Job *job = g_new0(Job, 1);
     job->app = app;
@@ -522,6 +527,39 @@ static void load_css(void) {
     g_object_unref(p);
 }
 
+/* ----- last-used backup directory (persisted) --------------------------- *
+ * We remember only the backup directory path so the user need not re-pick it
+ * each launch. Passwords and key material are NEVER written to disk. */
+
+static char *settings_path(void) {
+    return g_build_filename(g_get_user_config_dir(), "pq-sealed", "settings.ini", NULL);
+}
+
+static char *load_last_repo(void) {
+    char *path = settings_path();
+    GKeyFile *kf = g_key_file_new();
+    char *repo = NULL;
+    if (g_key_file_load_from_file(kf, path, G_KEY_FILE_NONE, NULL))
+        repo = g_key_file_get_string(kf, "general", "last_repo", NULL);
+    g_key_file_free(kf);
+    g_free(path);
+    return repo;  /* caller frees; NULL if unset */
+}
+
+static void save_last_repo(const char *repo) {
+    if (!repo || !*repo) return;
+    char *dir = g_build_filename(g_get_user_config_dir(), "pq-sealed", NULL);
+    g_mkdir_with_parents(dir, 0700);
+    g_free(dir);
+    char *path = settings_path();
+    GKeyFile *kf = g_key_file_new();
+    g_key_file_load_from_file(kf, path, G_KEY_FILE_KEEP_COMMENTS, NULL);
+    g_key_file_set_string(kf, "general", "last_repo", repo);
+    g_key_file_save_to_file(kf, path, NULL);
+    g_key_file_free(kf);
+    g_free(path);
+}
+
 static GtkWidget *pw_entry(void) {
     GtkWidget *e = gtk_entry_new();
     gtk_entry_set_visibility(GTK_ENTRY(e), FALSE);
@@ -584,7 +622,10 @@ static void activate(GtkApplication *gapp, gpointer user) {
 
     /* Backup directory */
     app->repo_entry = gtk_entry_new();
-    gtk_entry_set_text(GTK_ENTRY(app->repo_entry), "pqsealed-backup");
+    char *last_repo = load_last_repo();
+    gtk_entry_set_text(GTK_ENTRY(app->repo_entry),
+                       (last_repo && *last_repo) ? last_repo : "pqsealed-backup");
+    g_free(last_repo);
     GtkWidget *repo_btn = gtk_button_new_with_label("Browse…");
     g_signal_connect(repo_btn, "clicked", G_CALLBACK(on_browse_repo), app);
     g_signal_connect(app->repo_entry, "changed", G_CALLBACK(on_repo_changed), app);
