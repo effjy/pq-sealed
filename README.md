@@ -39,7 +39,7 @@ tool-set (Ciphers, Axis, …).
 
 <div align="center">
 
-![PQ-Sealed main window](screenshot1.png)
+![PQ-Sealed main window](screenshot.png)
 
 *The PQ-Sealed main window — choose a backup directory, pick an operation
 (initialise, back up, restore, view, list, verify), then run it with a live log.*
