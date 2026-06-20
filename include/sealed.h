@@ -85,6 +85,14 @@ int sealed_backup(const char *repo, const char *source,
 int sealed_restore(const char *repo, const char *snapshot, const char *dest,
                    const char *repo_pw, sealed_log_cb log, void *user,
                    char *err, size_t errlen);
+/* Reveal the contents (files and directories, with mode/size/mtime) of one
+ * snapshot without extracting anything. Requires the backup password: the file
+ * list lives inside the encrypted manifest, so only the password holder can
+ * read it. The signature is checked first and its status reported, and the
+ * decrypted manifest — which contains every file name — is wiped from memory
+ * before returning. The listing is streamed through the log callback. */
+int sealed_show(const char *repo, const char *snapshot, const char *repo_pw,
+                sealed_log_cb log, void *user, char *err, size_t errlen);
 /* repo_pw is optional: when a valid password is supplied the manifests are
  * decrypted to report the snapshot's true data size, file count and creation
  * date; otherwise the listing falls back to showing the manifest file size. */
