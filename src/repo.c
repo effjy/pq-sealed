@@ -567,8 +567,9 @@ int sealed_backup(const char *repo, const char *source,
     base = base ? base + 1 : spath;
     logf_cb(log, user, "");
     logf_cb(log, user, "Snapshot %s", base);
-    logf_cb(log, user, "  files: %llu (%llu new)   dirs: %llu",
+    logf_cb(log, user, "  files: %llu (%llu unique, %llu deduplicated)   dirs: %llu",
             (unsigned long long)c.files, (unsigned long long)c.files_new,
+            (unsigned long long)(c.files - c.files_new),
             (unsigned long long)c.dirs);
     logf_cb(log, user, "  new data this snapshot: %llu of %llu bytes",
             (unsigned long long)c.bytes_new, (unsigned long long)c.bytes);
