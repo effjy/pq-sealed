@@ -777,6 +777,175 @@ int sealed_list(const char *repo, const char *repo_pw, sealed_log_cb log,
     return 0;
 }
 
+/* ----- snapshot contents (read-only inspection) ------------------------- */
+
+/* Render a permission word as a 10-char "drwxr-xr-x"-style string. */
+static void fmt_mode(unsigned mode, int is_dir, char out[11]) {
+    static const char bits[] = "rwxrwxrwx";
+    out[0] = is_dir ? 'd' : '-';
+    for (int i = 0; i < 9; i++)
+        out[i + 1] = (mode & (1u << (8 - i))) ? bits[i] : '-';
+    out[10] = '\0';
+}
+
+/* Decode a base64 manifest path into `out` (NUL-terminated). Returns 0 on
+ * success, -1 if it does not fit or is not valid base64. */
+static int decode_rel(const char *b64, char *out, size_t cap) {
+    size_t rl;
+    uint8_t *rel = b64_decode(b64, strlen(b64), &rl);
+    if (!rel) return -1;
+    if (rl >= cap) { free(rel); return -1; }
+    memcpy(out, rel, rl);
+    out[rl] = '\0';
+    free(rel);
+    return 0;
+}
+
+int sealed_show(const char *repo, const char *snapshot, const char *repo_pw,
+                sealed_log_cb log, void *user, char *err, size_t errlen) {
+    if (require_repo(repo, err, errlen) != 0) return -1;
+    if (!repo_pw || !*repo_pw)
+        return fail(err, errlen,
+                    "a backup password is required to view a snapshot's contents");
+
+    /* Resolve the snapshot manifest path ('latest' -> newest). */
+    char mpath[4096];
+    int trunc;
+    if (!snapshot || !*snapshot || strcmp(snapshot, "latest") == 0) {
+        size_t n;
+        char **names = list_snapshots(repo, &n);
+        if (n == 0) { free(names); return fail(err, errlen, "no snapshots to view"); }
+        trunc = sfmt(mpath, sizeof mpath, "%s/snapshots/%s", repo, names[n - 1]);
+        for (size_t i = 0; i < n; i++) free(names[i]);
+        free(names);
+    } else {
+        const char *suffix = (strlen(snapshot) >= 9 &&
+            strcmp(snapshot + strlen(snapshot) - 9, ".manifest") == 0)
+            ? "" : ".manifest";
+        trunc = sfmt(mpath, sizeof mpath, "%s/snapshots/%s%s", repo, snapshot, suffix);
+    }
+    if (trunc) return fail(err, errlen, "snapshot path is too long");
+    if (!file_exists(mpath))
+        return fail(err, errlen, "snapshot '%s' not found",
+                    snapshot ? snapshot : "latest");
+
+    /* Check the signature first, so the listing we show is known authentic
+     * (viewing is read-only, so an invalid signature warns but does not block). */
+    char pubpath[4096], sigpath[4096];
+    rp(pubpath, sizeof pubpath, repo, "keys/snapshot.pub");
+    if (sfmt(sigpath, sizeof sigpath, "%s.sig", mpath) != 0)
+        return fail(err, errlen, "snapshot path is too long");
+    const char *sigstatus = "unknown (no public key)";
+    pqsign_key pk = {0};
+    if (load_key(pubpath, NULL, &pk) == 0) {
+        sigstatus = verify_file(&pk, mpath, sigpath) == 0 ? "OK" : "BAD/UNSIGNED";
+        key_free(&pk);
+    }
+
+    /* Decrypt the manifest — this is what makes the password mandatory. */
+    uint8_t dk[RC_DK_LEN];
+    sodium_mlock(dk, sizeof dk);
+    char kr[4096];
+    rp(kr, sizeof kr, repo, "keyring");
+    if (rc_keyring_open(kr, repo_pw, dk) != 0) {
+        sodium_munlock(dk, sizeof dk);
+        return fail(err, errlen, "wrong backup password, or key-ring corrupted");
+    }
+    size_t mlen;
+    uint8_t *mbuf = rc_open_buf(mpath, dk, &mlen);
+    sodium_munlock(dk, sizeof dk);
+    if (!mbuf)
+        return fail(err, errlen, "failed to decrypt the manifest (wrong password?)");
+
+    char *save = NULL;
+    char *line = strtok_r((char *)mbuf, "\n", &save);
+    if (!line || strcmp(line, MANIFEST_HDR) != 0) {
+        secure_wipe(mbuf, mlen); free(mbuf);
+        return fail(err, errlen, "not a PQ-Sealed manifest");
+    }
+
+    const char *base = strrchr(mpath, '/');
+    logf_cb(log, user, "Snapshot %s", base ? base + 1 : mpath);
+    if (strcmp(sigstatus, "OK") == 0)
+        logf_cb(log, user, "  signature: OK");
+    else
+        logf_cb(log, user,
+                "  signature: %s  !  contents below may not be authentic", sigstatus);
+
+    uint64_t files = 0, dirs = 0, total = 0;
+    int cancelled = 0, header_shown = 0;
+    char rels[4096];
+    while (!cancelled && (line = strtok_r(NULL, "\n", &save)) != NULL) {
+        if (strncmp(line, "source ", 7) == 0) {
+            if (decode_rel(line + 7, rels, sizeof rels) == 0)
+                cancelled = logf_cb(log, user, "  source:  %s", rels);
+            continue;
+        }
+        if (strncmp(line, "created ", 8) == 0) {
+            time_t t = (time_t)strtoll(line + 8, NULL, 10);
+            if (t > 0) {
+                struct tm tmv; localtime_r(&t, &tmv);
+                char ds[20]; strftime(ds, sizeof ds, "%Y-%m-%d %H:%M", &tmv);
+                cancelled = logf_cb(log, user, "  created: %s", ds);
+            }
+            continue;
+        }
+        if (!header_shown) {
+            logf_cb(log, user, "");
+            logf_cb(log, user, "%-10s %10s  %-16s  %s",
+                    "MODE", "SIZE", "MODIFIED", "PATH");
+            header_shown = 1;
+        }
+
+        char *fsave = NULL;
+        char *kind = strtok_r(line, " ", &fsave);
+        if (!kind) continue;
+
+        if (strcmp(kind, "D") == 0) {
+            char *mode = strtok_r(NULL, " ", &fsave);
+            char *b64  = strtok_r(NULL, " ", &fsave);
+            if (!mode || !b64 || decode_rel(b64, rels, sizeof rels) != 0) continue;
+            char ms[11];
+            fmt_mode((unsigned)strtoul(mode, NULL, 8), 1, ms);
+            cancelled = logf_cb(log, user, "%-10s %10s  %-16s  %s/",
+                                ms, "-", "", rels);
+            dirs++;
+        } else if (strcmp(kind, "F") == 0) {
+            char *hex   = strtok_r(NULL, " ", &fsave); (void)hex;
+            char *mode  = strtok_r(NULL, " ", &fsave);
+            char *size  = strtok_r(NULL, " ", &fsave);
+            char *mtime = strtok_r(NULL, " ", &fsave);
+            char *b64   = strtok_r(NULL, " ", &fsave);
+            if (!mode || !size || !mtime || !b64 ||
+                decode_rel(b64, rels, sizeof rels) != 0) continue;
+            long long sz = strtoll(size, NULL, 10);
+            if (sz > 0) total += (uint64_t)sz;
+            char ms[11], szs[32], ds[20] = "";
+            fmt_mode((unsigned)strtoul(mode, NULL, 8), 0, ms);
+            fmt_size(sz > 0 ? (uint64_t)sz : 0, szs, sizeof szs);
+            time_t t = (time_t)strtoll(mtime, NULL, 10);
+            if (t > 0) { struct tm tmv; localtime_r(&t, &tmv);
+                strftime(ds, sizeof ds, "%Y-%m-%d %H:%M", &tmv); }
+            cancelled = logf_cb(log, user, "%-10s %10s  %-16s  %s",
+                                ms, szs, ds, rels);
+            files++;
+        }
+    }
+
+    /* The plaintext manifest holds every file name — wipe it, don't just free. */
+    secure_wipe(mbuf, mlen);
+    free(mbuf);
+
+    if (cancelled) return fail(err, errlen, "cancelled");
+
+    char szs[32];
+    fmt_size(total, szs, sizeof szs);
+    logf_cb(log, user, "");
+    logf_cb(log, user, "%llu file(s), %llu director(ies), %s total",
+            (unsigned long long)files, (unsigned long long)dirs, szs);
+    return 0;
+}
+
 /* ----- snapshot deletion + object garbage collection -------------------- */
 
 /* A growable bag of 64-char object hashes. */

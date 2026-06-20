@@ -69,7 +69,7 @@ static const char *APP_CSS =
     ".status-ok { color: #39ff14; } .status-err { color: #ff426f; }"
     ".status-run { color: #00e5ff; }";
 
-enum { OP_INIT = 0, OP_BACKUP, OP_RESTORE, OP_LIST, OP_VERIFY, OP_DELETE };
+enum { OP_INIT = 0, OP_BACKUP, OP_RESTORE, OP_VIEW, OP_LIST, OP_VERIFY, OP_DELETE };
 
 typedef struct Job Job;
 
@@ -185,6 +185,26 @@ static void set_status(App *app, const char *cls, const char *text) {
 
 static void free_app(App *app) { stop_pulse(app); g_free(app); }
 
+/* Scrub a password entry: overwrite its text in place, then clear it.
+ * GtkEntry keeps its text in ordinary (unlocked) heap, so this is best-effort
+ * — it removes the live copy that would otherwise linger in freed heap (and
+ * possibly swap) after the window closes, but cannot reach buffers GtkEntry
+ * already grew, reallocated and freed for longer earlier values. A fully
+ * robust fix would back the entry with a custom mlocked GtkEntryBuffer. */
+static void wipe_entry(GtkWidget *w) {
+    if (!w || !GTK_IS_ENTRY(w)) return;
+    const gchar *t = gtk_entry_get_text(GTK_ENTRY(w));
+    if (t && *t) sodium_memzero((void *)t, strlen(t));
+    gtk_entry_set_text(GTK_ENTRY(w), "");
+}
+
+static void wipe_password_entries(App *app) {
+    wipe_entry(app->repo_pw_entry);
+    wipe_entry(app->repo_pw_confirm);
+    wipe_entry(app->key_pw_entry);
+    wipe_entry(app->key_pw_confirm);
+}
+
 /* ----- worker thread ---------------------------------------------------- */
 
 static void refresh_snapshots(App *app);
@@ -244,6 +264,10 @@ static gpointer worker_thread(gpointer data) {
     case OP_RESTORE:
         job->rc = sealed_restore(job->repo, job->snapshot, job->path2,
                                  job->repo_pw, log_cb, app, job->err, sizeof job->err);
+        break;
+    case OP_VIEW:
+        job->rc = sealed_show(job->repo, job->snapshot, job->repo_pw,
+                              log_cb, app, job->err, sizeof job->err);
         break;
     case OP_LIST:
         job->rc = sealed_list(job->repo, job->repo_pw, log_cb, app,
@@ -338,11 +362,13 @@ static void on_op_changed(GtkComboBox *combo, gpointer user) {
     gboolean restore = (op == OP_RESTORE);
     gboolean init    = (op == OP_INIT);
     gboolean delete  = (op == OP_DELETE);
-    /* The repo password is required for init/backup/restore/delete and optional
-     * for list (it unlocks the real per-snapshot data sizes); verify needs none. */
+    gboolean view    = (op == OP_VIEW);
+    /* The repo password is required for init/backup/restore/view/delete and
+     * optional for list (it unlocks the real per-snapshot data sizes); verify
+     * needs none. */
     gboolean needs_pw = (op != OP_VERIFY);
-    /* Both restore and delete pick an existing snapshot from the drop-down. */
-    gboolean pick_snap = (restore || delete);
+    /* Restore, view and delete each pick an existing snapshot from the drop-down. */
+    gboolean pick_snap = (restore || view || delete);
 
     gtk_widget_set_sensitive(app->path_entry, backup || restore);
     gtk_widget_set_sensitive(app->path_btn,   backup || restore);
@@ -360,7 +386,7 @@ static void on_op_changed(GtkComboBox *combo, gpointer user) {
     if (pick_snap) refresh_snapshots(app);
 
     const char *labels[] = { "INITIALISE", "BACK UP", "RESTORE",
-                             "LIST", "VERIFY", "DELETE" };
+                             "VIEW", "LIST", "VERIFY", "DELETE" };
     gtk_button_set_label(GTK_BUTTON(app->run_button), labels[op]);
 }
 
@@ -403,7 +429,8 @@ static void on_run(GtkButton *b, gpointer user) {
                                          : "Choose a folder to restore into.");
         return;
     }
-    if ((op == OP_INIT || op == OP_BACKUP || op == OP_RESTORE || op == OP_DELETE)
+    if ((op == OP_INIT || op == OP_BACKUP || op == OP_RESTORE || op == OP_VIEW
+         || op == OP_DELETE)
         && (!rpw || !*rpw)) {
         warn_dialog(app, "Enter the backup password."); return;
     }
@@ -554,6 +581,10 @@ static void on_window_destroy(GtkWidget *w, gpointer user) {
     App *app = user;
     app->window_gone = 1;
     app->cancel = 1;
+    /* Scrub the typed passwords from the entry widgets before GTK frees them in
+     * the default destroy handler (which runs after this one). The worker's own
+     * mlocked copies are zeroed separately via sodium_munlock. */
+    wipe_password_entries(app);
     Job *job = app->current_job;
     if (!job) free_app(app);
     /* else: the worker owns app's lifetime and frees it in job_finished_idle. */
@@ -682,6 +713,7 @@ static void activate(GtkApplication *gapp, gpointer user) {
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->op_combo), "Initialise backup directory");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->op_combo), "Back up a folder");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->op_combo), "Restore a snapshot");
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->op_combo), "View a snapshot's contents");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->op_combo), "List snapshots");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->op_combo), "Verify snapshots");
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->op_combo), "Delete a snapshot");
