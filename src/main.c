@@ -842,6 +842,13 @@ int main(int argc, char **argv) {
         return 1;
     }
     harden();
+    /* Disable the AT-SPI accessibility bridge before GTK initialises so it
+     * doesn't emit "Couldn't connect to accessibility bus" warnings in
+     * environments where that bus is unavailable (e.g. running as root /
+     * inside containers). NO_AT_BRIDGE covers GTK3; GTK_A11Y covers GTK4. */
+    g_setenv("NO_AT_BRIDGE", "1", TRUE);
+    g_setenv("GTK_A11Y", "none", TRUE);
+
     GtkApplication *gapp = gtk_application_new(APP_ID, G_APPLICATION_DEFAULT_FLAGS);
     g_signal_connect(gapp, "activate", G_CALLBACK(activate), NULL);
     int status = g_application_run(G_APPLICATION(gapp), argc, argv);
