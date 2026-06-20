@@ -39,10 +39,10 @@ tool-set (Ciphers, Axis, …).
 
 <div align="center">
 
-![PQ-Sealed main window](screenshot.png)
+![PQ-Sealed main window](screenshot1.png)
 
 *The PQ-Sealed main window — choose a backup directory, pick an operation
-(initialise, back up, restore, list, verify), then run it with a live log.*
+(initialise, back up, restore, view, list, verify), then run it with a live log.*
 
 </div>
 
@@ -181,6 +181,7 @@ then pick an operation:
 | **Initialise backup directory** | Sets up the backup directory, the hybrid key-ring (asks for a backup password) and the ML-DSA-65 signing key (asks for a signing passphrase). |
 | **Back up a folder** | Asks for the folder to back up and the backup password; stores only new/changed files and writes a signed snapshot. |
 | **Restore a snapshot** | Decrypts a snapshot (default `latest`) into a chosen folder after verifying its signature. |
+| **View a snapshot's contents** | Lists every file and directory inside a snapshot — with its mode, size and modification time — *without* extracting anything. Requires the backup password (the file list lives inside the encrypted manifest), checks the signature first and reports its status, and never writes plaintext to disk: the decrypted manifest, which holds every file name, is wiped from memory afterwards. |
 | **List snapshots** | Lists snapshots with size and signature status (public key only). |
 | **Verify snapshots** | Checks every snapshot signature against the public key. |
 | **Delete a snapshot** | Removes a chosen snapshot and garbage-collects the data objects no other snapshot still references, reclaiming disk space. Asks for the backup password (every remaining manifest is read to find shared objects) and confirms before deleting. Objects shared with other snapshots are kept. |
