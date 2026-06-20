@@ -118,6 +118,21 @@ struct Job {
 
 typedef struct { App *app; char *text; } LogMsg;
 
+/* Keep the log pinned to the bottom. This fires after the text view has
+ * recomputed its layout for newly inserted lines, so it scrolls all the way
+ * down even for the final burst of summary lines that scroll_to_mark would
+ * otherwise miss (it runs before those lines have been laid out). */
+static void logview_size_allocate(GtkWidget *w, GdkRectangle *alloc, gpointer user) {
+    (void)alloc;
+    App *app = user;
+    if (app->window_gone) return;
+    GtkTextIter end;
+    gtk_text_buffer_get_end_iter(app->logbuf, &end);
+    GtkTextMark *mk = gtk_text_buffer_get_insert(app->logbuf);
+    gtk_text_buffer_move_mark(app->logbuf, mk, &end);
+    gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(w), mk, 0.0, TRUE, 0.0, 1.0);
+}
+
 static gboolean append_log_idle(gpointer data) {
     LogMsg *m = data;
     if (!m->app->window_gone) {
@@ -129,7 +144,7 @@ static gboolean append_log_idle(gpointer data) {
         GtkTextMark *mk = gtk_text_buffer_get_insert(m->app->logbuf);
         gtk_text_buffer_move_mark(m->app->logbuf, mk, &end);
         gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(m->app->logview),
-                                     mk, 0.0, FALSE, 0.0, 0.0);
+                                     mk, 0.0, TRUE, 0.0, 1.0);
     }
     g_free(m->text);
     g_free(m);
@@ -762,6 +777,8 @@ static void activate(GtkApplication *gapp, gpointer user) {
     gtk_widget_set_size_request(scroll, 320, -1);
     GtkWidget *logview = gtk_text_view_new();
     app->logview = logview;
+    g_signal_connect(logview, "size-allocate",
+                     G_CALLBACK(logview_size_allocate), app);
     gtk_text_view_set_editable(GTK_TEXT_VIEW(logview), FALSE);
     gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(logview), FALSE);
     gtk_text_view_set_monospace(GTK_TEXT_VIEW(logview), TRUE);
