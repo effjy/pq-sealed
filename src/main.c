@@ -94,6 +94,7 @@ typedef struct {
     GtkWidget *progress;
     GtkWidget *status;
     GtkTextBuffer *logbuf;
+    GtkWidget *logview;
     guint      pulse_id;
     gboolean   pulsing;
     volatile int cancel;
@@ -127,6 +128,8 @@ static gboolean append_log_idle(gpointer data) {
         /* Auto-scroll to the bottom. */
         GtkTextMark *mk = gtk_text_buffer_get_insert(m->app->logbuf);
         gtk_text_buffer_move_mark(m->app->logbuf, mk, &end);
+        gtk_text_view_scroll_to_mark(GTK_TEXT_VIEW(m->app->logview),
+                                     mk, 0.0, FALSE, 0.0, 0.0);
     }
     g_free(m->text);
     g_free(m);
@@ -758,6 +761,7 @@ static void activate(GtkApplication *gapp, gpointer user) {
         GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
     gtk_widget_set_size_request(scroll, 320, -1);
     GtkWidget *logview = gtk_text_view_new();
+    app->logview = logview;
     gtk_text_view_set_editable(GTK_TEXT_VIEW(logview), FALSE);
     gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(logview), FALSE);
     gtk_text_view_set_monospace(GTK_TEXT_VIEW(logview), TRUE);
