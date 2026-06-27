@@ -41,7 +41,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-#define SIG_ALG       "ML-DSA-65"
+#define SIG_ALG       "ML-DSA-65"   /* default when the caller passes no alg */
 /* Domain-separation prefix mixed into every signed manifest digest. */
 static const char DS_CONTEXT[] = "pq-sealed/v1";
 
@@ -421,8 +421,9 @@ static int require_repo(const char *repo, char *err, size_t errlen) {
 }
 
 int sealed_init(const char *repo, const char *repo_pw, const char *key_pw,
-                char *err, size_t errlen) {
+                const char *alg, char *err, size_t errlen) {
     char marker[4096], kr[4096], pub[4096], sec[4096], sub[4096];
+    if (!alg || !*alg) alg = SIG_ALG;   /* honour the default if unspecified */
     rp(marker, sizeof marker, repo, "PQSEALED");
     if (file_exists(marker))
         return fail(err, errlen, "'%s' is already a PQ-Sealed backup directory", repo);
@@ -443,10 +444,10 @@ int sealed_init(const char *repo, const char *repo_pw, const char *key_pw,
     sodium_munlock(dk, sizeof dk);
     if (rc != 0) return fail(err, errlen, "failed to create the backup key-ring");
 
-    /* ML-DSA-65 snapshot-signing keypair. */
-    OQS_SIG *sig = OQS_SIG_new(SIG_ALG);
+    /* Snapshot-signing keypair (algorithm chosen by the caller). */
+    OQS_SIG *sig = OQS_SIG_new(alg);
     if (!sig) return fail(err, errlen,
-                          "signature algorithm '%s' unavailable in liboqs", SIG_ALG);
+                          "signature algorithm '%s' unavailable in liboqs", alg);
     uint8_t *pk = xmalloc(sig->length_public_key);
     uint8_t *sk = secure_alloc(sig->length_secret_key);
     if (OQS_SIG_keypair(sig, pk, sk) != OQS_SUCCESS) {
@@ -456,8 +457,8 @@ int sealed_init(const char *repo, const char *repo_pw, const char *key_pw,
 
     rp(pub, sizeof pub, repo, "keys/snapshot.pub");
     rp(sec, sizeof sec, repo, "keys/snapshot.key");
-    key_write_public(pub, SIG_ALG, pk, sig->length_public_key);
-    key_write_secret(sec, SIG_ALG, sk, sig->length_secret_key,
+    key_write_public(pub, alg, pk, sig->length_public_key);
+    key_write_secret(sec, alg, sk, sig->length_secret_key,
                      pk, sig->length_public_key, (key_pw && *key_pw) ? key_pw : NULL);
 
     write_file(marker, (const uint8_t *)MARKER_TEXT, strlen(MARKER_TEXT), 0644);

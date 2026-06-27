@@ -78,6 +78,9 @@ typedef struct {
     GtkWidget *window;
     GtkWidget *repo_entry;
     GtkWidget *op_combo;
+    GtkWidget *alg_label;
+    GtkWidget *alg_combo;      /* signing algorithm (init only) */
+    GtkWidget *alg_row;
     GtkWidget *path_label;     /* the field-label for path_entry */
     GtkWidget *path_entry;     /* source (backup) / destination (restore) */
     GtkWidget *path_btn;
@@ -110,6 +113,7 @@ struct Job {
     char snapshot[256];
     char repo_pw[PASSWORD_MAX];
     char key_pw[PASSWORD_MAX];
+    char alg[64];          /* signing algorithm (init only) */
     int  rc;
     char err[256];
 };
@@ -255,7 +259,7 @@ static gpointer worker_thread(gpointer data) {
     switch (job->op) {
     case OP_INIT:
         job->rc = sealed_init(job->repo, job->repo_pw, job->key_pw,
-                              job->err, sizeof job->err);
+                              job->alg, job->err, sizeof job->err);
         break;
     case OP_BACKUP:
         job->rc = sealed_backup(job->repo, job->path2, job->repo_pw, job->key_pw,
@@ -381,6 +385,8 @@ static void on_op_changed(GtkComboBox *combo, gpointer user) {
      * password; only Initialise establishes the passwords, so show them there. */
     gtk_widget_set_visible(app->repo_confirm_row, init);
     gtk_widget_set_visible(app->key_confirm_row, init);
+    /* The signing algorithm is fixed at creation, so only offer it for Initialise. */
+    gtk_widget_set_visible(app->alg_row, init);
 
     /* Pull in the available snapshots when entering Restore or Delete. */
     if (pick_snap) refresh_snapshots(app);
@@ -500,6 +506,13 @@ static void on_run(GtkButton *b, gpointer user) {
                       GTK_COMBO_BOX_TEXT(app->snap_entry));
     g_strlcpy(job->snapshot, (snap && *snap) ? snap : "latest", sizeof job->snapshot);
     g_free(snap);
+    /* The drop-down shows descriptive labels; map the row to the bare liboqs
+     * identifier the engine expects. */
+    static const char *const ALG_IDS[] = { "ML-DSA-44", "ML-DSA-65", "ML-DSA-87" };
+    int alg_idx = gtk_combo_box_get_active(GTK_COMBO_BOX(app->alg_combo));
+    if (alg_idx < 0 || alg_idx >= (int)(sizeof ALG_IDS / sizeof *ALG_IDS))
+        alg_idx = 1;  /* ML-DSA-65 */
+    g_strlcpy(job->alg, ALG_IDS[alg_idx], sizeof job->alg);
     g_strlcpy(job->repo_pw, rpw, sizeof job->repo_pw);
     g_strlcpy(job->key_pw, kpw, sizeof job->key_pw);
 
@@ -545,8 +558,9 @@ static void on_about(GtkButton *b, gpointer user) {
         "• Files sealed with a Kyber-1024 + X448 hybrid KEM whose\n"
         "  secret key is wrapped by your backup-directory password;\n"
         "  contents encrypted with XChaCha20-Poly1305 (secretstream)\n"
-        "• Each snapshot manifest signed with ML-DSA-65 (FIPS 204)\n"
-        "  for tamper-evident, verifiable backups\n"
+        "• Each snapshot manifest signed with ML-DSA (FIPS 204):\n"
+        "  choose level 44, 65 or 87 when creating a backup\n"
+        "  directory, for tamper-evident, verifiable backups\n"
         "• Restore verifies every object's hash against the signed\n"
         "  manifest\n"
         "• Hardened memory: passwords and keys stay in locked,\n"
@@ -719,6 +733,24 @@ static void activate(GtkApplication *gapp, gpointer user) {
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->op_combo), "Delete a snapshot");
     gtk_box_pack_start(GTK_BOX(left),
         labeled_row("Operation:", app->op_combo, NULL, NULL), FALSE, FALSE, 0);
+
+    /* Signing algorithm (Initialise only) — higher levels give a larger security
+     * margin at the cost of bigger keys and signatures. Default is ML-DSA-65. */
+    app->alg_combo = gtk_combo_box_text_new();
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->alg_combo),
+        "ML-DSA-44  (NIST level 2 — fastest, smallest)");
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->alg_combo),
+        "ML-DSA-65  (NIST level 3 — recommended default)");
+    gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(app->alg_combo),
+        "ML-DSA-87  (NIST level 5 — strongest margin)");
+    gtk_combo_box_set_active(GTK_COMBO_BOX(app->alg_combo), 1);  /* ML-DSA-65 */
+    gtk_widget_set_tooltip_text(app->alg_combo,
+        "Post-quantum signature scheme used to sign every snapshot. Chosen once, "
+        "when the backup directory is created; existing directories keep theirs. "
+        "Higher levels resist stronger attackers but produce larger signatures.");
+    app->alg_row = labeled_row("Signing algorithm:", app->alg_combo, NULL,
+                               &app->alg_label);
+    gtk_box_pack_start(GTK_BOX(left), app->alg_row, FALSE, FALSE, 0);
 
     /* Source / destination folder */
     app->path_entry = gtk_entry_new();
