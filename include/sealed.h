@@ -77,8 +77,12 @@ uint8_t *rc_open_buf(const char *in_path, const uint8_t dk[RC_DK_LEN],
 /* `key_pw` may be NULL or "" to leave the signing key unencrypted. */
 typedef int (*sealed_log_cb)(const char *line, void *user);
 
+/* `alg` selects the snapshot-signing algorithm (e.g. "ML-DSA-44", "ML-DSA-65",
+ * "ML-DSA-87"); NULL or "" falls back to the built-in default. The choice is
+ * baked into the backup directory at init time; backup/restore/verify read it
+ * back out of the key and signature files. */
 int sealed_init(const char *repo, const char *repo_pw, const char *key_pw,
-                char *err, size_t errlen);
+                const char *alg, char *err, size_t errlen);
 int sealed_backup(const char *repo, const char *source,
                   const char *repo_pw, const char *key_pw,
                   sealed_log_cb log, void *user, char *err, size_t errlen);
