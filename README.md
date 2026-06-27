@@ -16,7 +16,7 @@ Author: **Jean-Francois Lachance-Caumartin**
 [![AEAD: XChaCha20-Poly1305](https://img.shields.io/badge/AEAD-XChaCha20--Poly1305-00b3c4.svg?style=flat-square)](#)
 [![KDF: Argon2id](https://img.shields.io/badge/KDF-Argon2id-9b59b6.svg?style=flat-square)](#)
 [![PQC: Kyber-1024 + X448](https://img.shields.io/badge/PQC-Kyber--1024%20%2B%20X448-ff426f.svg?style=flat-square)](#)
-[![Signatures: ML-DSA-65](https://img.shields.io/badge/Signatures-ML--DSA--65%20(FIPS%20204)-8a2be2.svg?style=flat-square)](#)
+[![Signatures: ML-DSA 44/65/87](https://img.shields.io/badge/Signatures-ML--DSA%2044%2F65%2F87%20(FIPS%20204)-8a2be2.svg?style=flat-square)](#)
 [![crypto: libsodium + liboqs](https://img.shields.io/badge/crypto-libsodium%20%2B%20liboqs-1a5276.svg?style=flat-square)](#)
 
 </div>
@@ -27,8 +27,10 @@ PQ-Sealed backs up a directory into an encrypted, content-addressed **backup
 directory**. Each backup is *incremental*: only files that are new or have
 changed since the last snapshot are stored. Every file is sealed behind a
 **Kyber-1024 + X448 hybrid KEM**, and every snapshot manifest is signed with
-**ML-DSA-65 (FIPS 204)**, so backups are both confidential against a future
-quantum adversary and verifiable against tampering.
+**ML-DSA (FIPS 204)** — choose **ML-DSA-44**, **ML-DSA-65** (the default) or
+**ML-DSA-87** when you create the backup directory — so backups are both
+confidential against a future quantum adversary and verifiable against
+tampering.
 
 It ships as a small GTK3 desktop app in the same style as the rest of the
 tool-set (Ciphers, Axis, …).
@@ -55,8 +57,8 @@ A backup directory holds everything needed to store and restore snapshots:
 ```
 <backup-dir>/PQSEALED              marker + format version
 <backup-dir>/keyring               hybrid-KEM key-ring (see below)
-<backup-dir>/keys/snapshot.pub     ML-DSA-65 public key (armored)
-<backup-dir>/keys/snapshot.key     ML-DSA-65 secret key (passphrase-encrypted)
+<backup-dir>/keys/snapshot.pub     ML-DSA public key (armored; level chosen at init)
+<backup-dir>/keys/snapshot.key     ML-DSA secret key (passphrase-encrypted)
 <backup-dir>/objects/<ab>/<hex>    sealed file contents, named by plaintext hash
 <backup-dir>/snapshots/<stamp>.manifest{,.sig}
 ```
@@ -79,7 +81,8 @@ incremental and de-duplicated.
 
 **Tamper-evident snapshots.** Each snapshot writes an encrypted manifest listing
 every file and directory with its mode, size, mtime and content hash. The
-manifest is signed with ML-DSA-65. *Verify* checks every signature with the
+manifest is signed with the backup directory's ML-DSA key (level 44, 65 or 87,
+chosen at init). *Verify* checks every signature with the
 public key (no password needed); *restore* refuses to run on an invalid
 signature, and re-checks every restored file's hash against the signed manifest.
 
@@ -178,7 +181,7 @@ then pick an operation:
 
 | Operation | What it does |
 |:---|:---|
-| **Initialise backup directory** | Sets up the backup directory, the hybrid key-ring (asks for a backup password) and the ML-DSA-65 signing key (asks for a signing passphrase). |
+| **Initialise backup directory** | Sets up the backup directory, the hybrid key-ring (asks for a backup password) and the ML-DSA signing key (asks for a signing passphrase). A **Signing algorithm** drop-down selects the security level — ML-DSA-44, ML-DSA-65 (default) or ML-DSA-87 — for this backup directory; the choice is fixed at creation and applies only to *Initialise*. |
 | **Back up a folder** | Asks for the folder to back up and the backup password; stores only new/changed files and writes a signed snapshot. |
 | **Restore a snapshot** | Decrypts a snapshot (default `latest`) into a chosen folder after verifying its signature. |
 | **View a snapshot's contents** | Lists every file and directory inside a snapshot — with its mode, size and modification time — *without* extracting anything. Requires the backup password (the file list lives inside the encrypted manifest), checks the signature first and reports its status, and never writes plaintext to disk: the decrypted manifest, which holds every file name, is wiped from memory afterwards. |
@@ -188,6 +191,24 @@ then pick an operation:
 
 Operations run on a worker thread with a live log, so the UI stays responsive
 during the Argon2id KDF and large backups.
+
+### Choosing a signing level
+
+The **Signing algorithm** is picked once, when you *Initialise* a backup
+directory, and is then recorded in the key and signature files — backup, restore
+and verify read it back automatically, so you never set it again for that
+directory. Existing backup directories keep whatever level they were created
+with.
+
+| Algorithm | NIST level | Trade-off |
+|---|---|---|
+| **ML-DSA-44** | 2 | Smallest keys and signatures, fastest — a lighter margin. |
+| **ML-DSA-65** | 3 | The **default**; a strong balance of security and size. |
+| **ML-DSA-87** | 5 | The largest security margin, at the cost of bigger signatures. |
+
+When in doubt, keep the default (ML-DSA-65). All three are FIPS 204 post-quantum
+schemes; higher levels resist stronger attackers but make each snapshot's
+signature larger.
 
 ### The two passwords (they do different jobs)
 
