@@ -4,8 +4,8 @@
  *
  *   <repo>/PQSEALED              marker + format version
  *   <repo>/keyring               hybrid-KEM key-ring (see repocrypto.c)
- *   <repo>/keys/snapshot.pub     ML-DSA-65 public key (armored)
- *   <repo>/keys/snapshot.key     ML-DSA-65 secret key (passphrase-encrypted)
+ *   <repo>/keys/snapshot.pub     ML-DSA public key (armored; level chosen at init)
+ *   <repo>/keys/snapshot.key     ML-DSA secret key (passphrase-encrypted)
  *   <repo>/objects/<ab>/<hex>    sealed file contents, named by plaintext hash
  *   <repo>/snapshots/<stamp>.manifest{,.sig}
  *
@@ -16,9 +16,10 @@
  * deduplicating: only new or changed content is written.
  *
  * Each snapshot's manifest lists every file and directory with its mode,
- * size, mtime and content hash. The (encrypted) manifest is signed with
- * ML-DSA-65, so a snapshot is tamper-evident: altering the manifest or
- * substituting objects is detected at verify/restore time.
+ * size, mtime and content hash. The (encrypted) manifest is signed with the
+ * backup directory's ML-DSA key (level 44, 65 or 87, chosen at init), so a
+ * snapshot is tamper-evident: altering the manifest or substituting objects
+ * is detected at verify/restore time.
  */
 #define _GNU_SOURCE
 #include "sealed.h"
@@ -219,9 +220,12 @@ static int load_key(const char *path, const char *pw, pqsign_key *out) {
 }
 
 /* Sign `file` with the repository secret key, writing a detached blob to
- * `sigpath`. Returns 0 on success. */
+ * `sigpath`. Returns 0 on success. On success, if `alg_out` is non-NULL the
+ * algorithm actually used (read from the key file) is copied into it so the
+ * caller can report it accurately. */
 static int sign_file(const char *seckey_path, const char *key_pw,
                      const char *file, const char *sigpath,
+                     char *alg_out, size_t alg_out_len,
                      char *err, size_t errlen) {
     pqsign_key sk;
     if (load_key(seckey_path, key_pw, &sk) != 0)
@@ -229,6 +233,7 @@ static int sign_file(const char *seckey_path, const char *key_pw,
                     "cannot load signing key (wrong passphrase, or corrupt key)");
     if (!sk.is_secret) { key_free(&sk);
         return fail(err, errlen, "backup signing key is not a secret key"); }
+    if (alg_out && alg_out_len) snprintf(alg_out, alg_out_len, "%s", sk.alg);
 
     OQS_SIG *sig = OQS_SIG_new(sk.alg);
     int rc = -1;
@@ -559,7 +564,9 @@ int sealed_backup(const char *repo, const char *source,
     if (sfmt(sigpath, sizeof sigpath, "%s.sig", spath) != 0)
         return fail(err, errlen, "snapshot path is too long");
     rp(seckey, sizeof seckey, repo, "keys/snapshot.key");
-    if (sign_file(seckey, key_pw, spath, sigpath, err, errlen) != 0) {
+    char used_alg[64] = "";
+    if (sign_file(seckey, key_pw, spath, sigpath,
+                  used_alg, sizeof used_alg, err, errlen) != 0) {
         remove(spath);   /* don't leave an unsigned snapshot behind */
         return -1;
     }
@@ -574,7 +581,8 @@ int sealed_backup(const char *repo, const char *source,
             (unsigned long long)c.dirs);
     logf_cb(log, user, "  new data this snapshot: %llu of %llu bytes",
             (unsigned long long)c.bytes_new, (unsigned long long)c.bytes);
-    logf_cb(log, user, "  manifest signed with %s", SIG_ALG);
+    logf_cb(log, user, "  manifest signed with %s",
+            used_alg[0] ? used_alg : SIG_ALG);
     return 0;
 }
 
