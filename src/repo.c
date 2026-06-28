@@ -266,15 +266,19 @@ out:
 }
 
 /* Verify the detached signature `sigpath` over `file` with `pk`.
- * Returns 0 if valid, 1 if invalid/missing/mismatched. */
+ * Returns 0 if valid, 1 if invalid/missing/mismatched. When `alg_out` is
+ * non-NULL it receives the algorithm named in the signature file (whatever it
+ * is), so the caller can report the scheme even for a failed verification. */
 static int verify_file(const pqsign_key *pk, const char *file,
-                       const char *sigpath) {
+                       const char *sigpath, char *alg_out, size_t alg_out_len) {
+    if (alg_out && alg_out_len) alg_out[0] = '\0';
     size_t blob_len;
     uint8_t *blob = slurp(sigpath, &blob_len);
     if (!blob) return 1;
     pqsign_sigfile sf;
     if (!sigfile_parse(blob, blob_len, &sf)) { free(blob); return 1; }
     sf.raw = blob;
+    if (alg_out && alg_out_len) snprintf(alg_out, alg_out_len, "%s", sf.alg);
 
     int bad = 1;
     if (strcmp(sf.alg, pk->alg) == 0) {
@@ -752,7 +756,7 @@ int sealed_list(const char *repo, const char *repo_pw, sealed_log_cb log,
             continue;
         }
         const char *status = !have_pub ? "?"
-            : (verify_file(&pk, mpath, sigpath) == 0 ? "OK" : "BAD/UNSIGNED");
+            : (verify_file(&pk, mpath, sigpath, NULL, 0) == 0 ? "OK" : "BAD/UNSIGNED");
 
         if (have_dk) {
             uint64_t bytes = 0, files = 0;
@@ -847,7 +851,7 @@ int sealed_show(const char *repo, const char *snapshot, const char *repo_pw,
     const char *sigstatus = "unknown (no public key)";
     pqsign_key pk = {0};
     if (load_key(pubpath, NULL, &pk) == 0) {
-        sigstatus = verify_file(&pk, mpath, sigpath) == 0 ? "OK" : "BAD/UNSIGNED";
+        sigstatus = verify_file(&pk, mpath, sigpath, NULL, 0) == 0 ? "OK" : "BAD/UNSIGNED";
         key_free(&pk);
     }
 
@@ -1126,15 +1130,17 @@ int sealed_verify(const char *repo, int *out_failures,
     size_t n;
     char **names = list_snapshots(repo, &n);
     int failures = 0;
+    if (n) logf_cb(log, user, "%-28s %-12s %s", "SNAPSHOT", "ALGORITHM", "STATUS");
     for (size_t i = 0; i < n; i++) {
-        char mpath[4096], sigpath[4096];
+        char mpath[4096], sigpath[4096], alg[64] = "";
         int bad;
         if (sfmt(mpath, sizeof mpath, "%s/snapshots/%s", repo, names[i]) != 0 ||
             sfmt(sigpath, sizeof sigpath, "%s.sig", mpath) != 0)
             bad = 1;   /* unreachable name counts as a failure */
         else
-            bad = verify_file(&pk, mpath, sigpath);
-        logf_cb(log, user, "%-28s %s", names[i], bad ? "FAILED" : "OK");
+            bad = verify_file(&pk, mpath, sigpath, alg, sizeof alg);
+        logf_cb(log, user, "%-28s %-12s %s", names[i],
+                alg[0] ? alg : "-", bad ? "FAILED" : "OK");
         if (bad) failures++;
         free(names[i]);
     }
@@ -1289,7 +1295,7 @@ int sealed_restore(const char *repo, const char *snapshot, const char *dest,
         return fail(err, errlen, "snapshot path is too long");
     pqsign_key pk = {0};
     if (load_key(pubpath, NULL, &pk) == 0) {
-        int bad = verify_file(&pk, mpath, sigpath);
+        int bad = verify_file(&pk, mpath, sigpath, NULL, 0);
         key_free(&pk);
         if (bad) return fail(err, errlen,
             "snapshot signature is INVALID — refusing to restore");
